@@ -27,6 +27,7 @@ interface MatineeStatusResponse {
   text: string
   busy?: boolean
   progress?: number
+  hide?: string[] // config field keys to hide while the plugin runs
 }
 
 // What a usermatch field's options_hook returns; the field stores
@@ -57,6 +58,8 @@ interface MatineeFetchOptions {
   method?: string
   headers?: Record<string, string>
   body?: string
+  // Skips TLS verification (self-signed LAN server only); SSRF blocks stay.
+  insecure?: boolean
 }
 
 interface MatineeFetchResult {

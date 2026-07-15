@@ -1,7 +1,7 @@
 {
   "id": "migrate-plex",
   "name": "Plex Watch-State Migration",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "Migrate watched flags and resume positions per user from a Plex server into Matinee. Covers the owner and Plex Home users non external shared accounts.",
   "author": "Anna Reber",
   "homepage": "https://github.com/getmatinee/matinee-plugins",
@@ -10,7 +10,7 @@
   "capabilities": ["migration"],
   "scopes": ["network", "storage", "watch-states"],
   "config": [
-    { "key": "server_url", "label": "Plex server URL", "type": "text", "required": true, "description": "For example http://plex.local:32400 (no trailing slash)." },
+    { "key": "server_url", "label": "Plex server URL", "type": "text", "required": true, "description": "For example http://plex.local:32400 or https://192.168.1.10:32400. Self-signed HTTPS certificates are accepted. No trailing slash." },
     { "key": "_status", "label": "Connection", "type": "info", "status_hook": "status" },
     { "key": "_connect", "label": "Connect Plex account", "type": "button", "action": "connect", "description": "Shows a code to enter at https://plex.tv/link. The Connection row updates once the link completes." },
     { "key": "plex_token", "label": "Plex token (manual fallback)", "type": "password", "description": "Optional: paste an owner X-Plex-Token instead of using the link flow." },

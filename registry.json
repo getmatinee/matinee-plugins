@@ -37,7 +37,7 @@
       ],
       "versions": [
         {
-          "version": "1.0.4",
+          "version": "1.0.5",
           "matinee_min": "2.2.0",
           "source": "plugins/migrate-emby/"
         }
@@ -59,7 +59,7 @@
       ],
       "versions": [
         {
-          "version": "0.9.4",
+          "version": "0.9.5",
           "matinee_min": "2.2.0",
           "source": "plugins/migrate-plex/"
         }

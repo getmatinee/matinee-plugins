@@ -67,7 +67,7 @@ the new values.
 | `boolean` | checkbox | |
 | `button` | button that POSTs a named hook | `action` (required): the hook name |
 | `multiselect` | checkbox list loaded from a hook | `options_hook` (required): hook returning `{options: [{value, label}]}` |
-| `info` | read-only status text from a hook, polled while the modal is open | `status_hook` (required): hook returning `{text, busy?, progress?}` |
+| `info` | read-only status text from a hook, polled while the modal is open | `status_hook` (required): hook returning `{text, busy?, progress?, hide?}` |
 | `usermatch` | two-column matcher: drag local users onto remote rows | `options_hook` (required), see below |
 
 All types accept `key` (required), `label` (required), `required`,
@@ -79,7 +79,10 @@ handlers (below). Hook-driven rows only work while the plugin is running.
 
 `info` responses may set `busy: true` (the UI shows a spinner and keeps
 polling every few seconds) and `progress: 0-100` (the UI renders a progress
-bar) - that is how a long-running job reports live state.
+bar) - that is how a long-running job reports live state. A response may also
+set `hide: ["key", ...]` to hide other config fields by key while the plugin
+is running (e.g. hide a manual-token fallback once an OAuth link succeeds);
+the list is re-evaluated on every poll.
 
 `usermatch` renders one row per remote user with a drop zone; the admin drags
 a Matinee user chip (or picks it from the row's select) onto a row to match
@@ -136,7 +139,7 @@ matinee.http.onCallback(function (req) {
 | `matinee.on(event, handler)` | - | subscribe to server events |
 | `matinee.schedule(everyMinutes, fn)` | - | recurring task; first run one interval after load; minimum 1 minute |
 | `matinee.http.onRequest(name, fn)` / `.onCallback(fn)` | - | inbound hooks, see above |
-| `matinee.http.fetch(url, {method, headers, body})` | `network` | outbound HTTP(S); returns `{status, headers, body}` |
+| `matinee.http.fetch(url, {method, headers, body, insecure})` | `network` | outbound HTTP(S); returns `{status, headers, body}` |
 | `matinee.playlists.*`, `matinee.music.*` | `playlists` | playlist sync surface, see below |
 | `matinee.users.*`, `matinee.media.*`, `matinee.watch.*` | `watch-states` | watch-state migration surface, see below |
 | `matinee.registerMetadataProvider(def)` | - | metadata extension point |
@@ -187,7 +190,10 @@ Plugins do not need to log their own HTTP calls.
   after **60 seconds**. Split long work into schedule ticks or cursor state.
 - `matinee.http.fetch`: 30 second timeout, 10 MB response cap, http(s) only.
   Link-local and cloud-metadata addresses (169.254.0.0/16, fe80::/10) are
-  blocked at connect time; private LAN addresses are allowed.
+  blocked at connect time; private LAN addresses are allowed. Pass
+  `{ insecure: true }` to skip TLS certificate verification for that request
+  (a self-signed LAN media server); use it only for the user's own configured
+  server, never for public endpoints. The address blocks still apply.
 - The per-plugin job queue holds 64 pending calls; events beyond that are
   dropped rather than blocking the server.
 

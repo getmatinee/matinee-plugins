@@ -85,7 +85,9 @@ function plexHeaders(token) {
 }
 
 function plexRequest(method, url, token) {
-  var res = matinee.http.fetch(url, { method: method, headers: plexHeaders(token) })
+  // The user's Plex server often has a self-signed cert; plex.tv does not.
+  var insecure = url.indexOf(PLEXTV) !== 0
+  var res = matinee.http.fetch(url, { method: method, headers: plexHeaders(token), insecure: insecure })
   if (res.status >= 400) {
     throw new Error('Plex API error ' + res.status + ' for ' + url.split('?')[0])
   }
@@ -116,6 +118,7 @@ function checkPin() {
     if (data && data.authToken) {
       saveJSON('auth', { token: String(data.authToken), linkedAt: Date.now() })
       matinee.storage.delete('pin')
+      statusCache = null
       matinee.log('Plex account linked')
       return String(data.authToken)
     }
@@ -312,34 +315,36 @@ matinee.http.onRequest('status', function () {
   if (!token) {
     return { body: jsonBody({ text: 'Not linked. Use "Connect Plex account" (or paste a token) and save.' }) }
   }
+  // Linked from here on: the manual token field is redundant, hide it.
+  var hide = ['plex_token']
   var cfg = matinee.getConfig()
   if (!cfg.server_url) {
-    return { body: jsonBody({ text: 'Linked. Enter the Plex server URL and save.' }) }
+    return { body: jsonBody({ text: 'Linked. Enter the Plex server URL and save.', hide: hide }) }
   }
+  var text
   if (statusCache && Date.now() - statusCache.at < STATUS_CACHE_MS) {
-    return { body: statusCache.body }
-  }
-  try {
-    var identity = plexRequest('GET', baseUrl() + '/identity', token)
-    var mc = (identity && identity.MediaContainer) || {}
-    lines.push('Connected to Plex server (version ' + (mc.version || 'unknown') + ').')
-    var matched = matchUsers(fetchRemoteUsers(token))
-    var resolved = resolvePairs(matched, false)
-    var names = []
-    for (var i = 0; i < resolved.length; i++) {
-      names.push(resolved[i].remoteName + ' -> ' + resolved[i].matineeName)
+    text = statusCache.text
+  } else {
+    try {
+      var identity = plexRequest('GET', baseUrl() + '/identity', token)
+      var mc = (identity && identity.MediaContainer) || {}
+      lines.push('Connected to Plex server (version ' + (mc.version || 'unknown') + ').')
+      var matched = matchUsers(fetchRemoteUsers(token))
+      var resolved = resolvePairs(matched, false)
+      var names = []
+      for (var i = 0; i < resolved.length; i++) {
+        names.push(resolved[i].remoteName + ' -> ' + resolved[i].matineeName)
+      }
+      var line = matched.length + ' Plex users (owner + home), ' + resolved.length + ' will be migrated'
+      line += names.length ? ': ' + names.join(', ') + '.' : '.'
+      lines.push(line)
+      text = lines.join('\n')
+    } catch (e) {
+      text = 'Not connected: ' + (e && e.message ? e.message : String(e)) + ' Check the server URL and link state.'
     }
-    var line = matched.length + ' Plex users (owner + home), ' + resolved.length + ' will be migrated'
-    line += names.length ? ': ' + names.join(', ') + '.' : '.'
-    lines.push(line)
-  } catch (e) {
-    var errBody = jsonBody({ text: 'Not connected: ' + (e && e.message ? e.message : String(e)) + ' Check the server URL and link state.' })
-    statusCache = { at: Date.now(), body: errBody }
-    return { body: errBody }
+    statusCache = { at: Date.now(), text: text }
   }
-  var body = jsonBody({ text: lines.join('\n') })
-  statusCache = { at: Date.now(), body: body }
-  return { body: body }
+  return { body: jsonBody({ text: text, hide: hide }) }
 })
 
 // Plex users, Matinee accounts, and the name-based auto matches for the usermatch config field.
