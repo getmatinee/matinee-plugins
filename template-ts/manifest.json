@@ -1,0 +1,12 @@
+{
+  "id": "my-plugin",
+  "name": "My Plugin",
+  "version": "1.0.0",
+  "description": "Describe what your plugin does.",
+  "author": "you",
+  "main": "main.js",
+  "matinee_min": "2.2.1",
+  "capabilities": ["metadata_provider", "scanner"],
+  "scopes": ["network"],
+  "config": [{ "key": "api_key", "label": "API Key", "type": "password" }]
+}
