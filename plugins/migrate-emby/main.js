@@ -63,7 +63,8 @@ function embyGet(path, params) {
   if (params) url += (path.indexOf('?') === -1 ? '?' : '&') + qs(params)
   var res = matinee.http.fetch(url, {
     method: 'GET',
-    headers: { 'X-Emby-Token': String(cfg.api_key || '') }
+    headers: { 'X-Emby-Token': String(cfg.api_key || '') },
+    insecure: true
   })
   if (res.status >= 400) {
     throw new Error('Emby API error ' + res.status + ' for ' + path.split('?')[0])
