@@ -1,0 +1,29 @@
+name: validate
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Validate registry and manifests
+        run: python3 scripts/validate.py
+
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Compile every entrypoint with goja
+        working-directory: scripts/gojacheck
+        run: go run . ../../plugins/*/main.js

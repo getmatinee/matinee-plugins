@@ -1,0 +1,689 @@
+// Copyright (C) 2023-2026 Matinee
+// Author: Anna Reber
+// License: AGPL-3.0-or-later
+// https://github.com/getmatinee/matinee
+
+// Plex Watch State Migration
+// The admin links a Plex account via the plex.tv/link PIN flow (or uses a token), maps Plex users to Matinee accounts, and a scheduler-driven job copies watched flags and resume positions per user.
+// Owner and Plex Home users are supported. -> external shared accounts cannot be read with the owner token and are excluded.
+
+'use strict'
+
+var PAGE_SIZE = 200
+var PAGES_PER_TICK = 5
+var PLEXTV = 'https://plex.tv'
+var PIN_MAX_AGE_MS = 15 * 60 * 1000
+
+function loadJSON(key) {
+  var raw = matinee.storage.get(key)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch (e) {
+    return null
+  }
+}
+
+function saveJSON(key, value) {
+  matinee.storage.set(key, JSON.stringify(value))
+}
+
+function jsonBody(obj) {
+  return JSON.stringify(obj)
+}
+
+function qs(obj) {
+  var parts = []
+  for (var key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(String(obj[key])))
+    }
+  }
+  return parts.join('&')
+}
+
+// Creates the client identifier for Plex
+function randToken(n) {
+  var alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  var out = ''
+  for (var i = 0; i < n; i++) {
+    out += alphabet.charAt(Math.floor(Math.random() * alphabet.length))
+  }
+  return out
+}
+
+// X-Plex-Client-Identifier that plex.tv needs and binds access to it
+function clientId() {
+  var id = matinee.storage.get('plex.clientId')
+  if (!id) {
+    id = 'matinee-' + randToken(24)
+    matinee.storage.set('plex.clientId', id)
+  }
+  return id
+}
+
+function plexHeaders(token) {
+  var headers = {
+    Accept: 'application/json',
+    'X-Plex-Client-Identifier': clientId(),
+    'X-Plex-Product': 'Matinee',
+    'X-Plex-Version': String(matinee.manifest.version)
+  }
+  if (token) headers['X-Plex-Token'] = token
+  return headers
+}
+
+function plexRequest(method, url, token) {
+  var res = matinee.http.fetch(url, { method: method, headers: plexHeaders(token) })
+  if (res.status >= 400) {
+    throw new Error('Plex API error ' + res.status + ' for ' + url.split('?')[0])
+  }
+  return JSON.parse(res.body)
+}
+
+function baseUrl() {
+  var cfg = matinee.getConfig()
+  return String(cfg.server_url || '').replace(/\/+$/, '')
+}
+
+function ownerToken() {
+  var auth = loadJSON('auth')
+  if (auth && auth.token) return auth.token
+  var cfg = matinee.getConfig()
+  return String(cfg.plex_token || '') || null
+}
+
+function checkPin() {
+  var pin = loadJSON('pin')
+  if (!pin || !pin.id) return null
+  if (Date.now() - Number(pin.createdAt || 0) > PIN_MAX_AGE_MS) {
+    matinee.storage.delete('pin')
+    return null
+  }
+  try {
+    var data = plexRequest('GET', PLEXTV + '/api/v2/pins/' + encodeURIComponent(pin.id), null)
+    if (data && data.authToken) {
+      saveJSON('auth', { token: String(data.authToken), linkedAt: Date.now() })
+      matinee.storage.delete('pin')
+      matinee.log('Plex account linked')
+      return String(data.authToken)
+    }
+  } catch (e) {
+    // invalid pin
+    matinee.storage.delete('pin')
+  }
+  return null
+}
+
+// Try to request a plex.tv link
+matinee.http.onRequest('connect', function () {
+  var res = matinee.http.fetch(PLEXTV + '/api/v2/pins?strong=true', {
+    method: 'POST',
+    headers: plexHeaders(null)
+  })
+  if (res.status >= 400) {
+    return { status: 502, body: jsonBody({ error: 'plex.tv rejected the link request (' + res.status + ').' }) }
+  }
+  var data
+  try {
+    data = JSON.parse(res.body)
+  } catch (e) {
+    return { status: 502, body: jsonBody({ error: 'plex.tv returned an invalid response.' }) }
+  }
+  if (!data || !data.id || !data.code) {
+    return { status: 502, body: jsonBody({ error: 'plex.tv returned no link code.' }) }
+  }
+  saveJSON('pin', { id: data.id, code: data.code, createdAt: Date.now() })
+  return { body: jsonBody({ message: 'Enter code ' + data.code + ' at https://plex.tv/link - the Connection row updates once linked.' }) }
+})
+
+// Parses "remoteUser=matineeUser, other=me" into a lowercase map
+function parseUserMap(raw) {
+  var map = {}
+  var pairs = String(raw || '').split(',')
+  for (var i = 0; i < pairs.length; i++) {
+    var idx = pairs[i].indexOf('=')
+    if (idx <= 0) continue
+    var remote = pairs[i].slice(0, idx).replace(/^\s+|\s+$/g, '').toLowerCase()
+    var local = pairs[i].slice(idx + 1).replace(/^\s+|\s+$/g, '')
+    if (remote && local) map[remote] = local
+  }
+  return map
+}
+
+// Matches remote users to Matinee accounts
+function matchUsers(remoteUsers) {
+  var cfg = matinee.getConfig()
+  var overrides = parseUserMap(cfg.user_map)
+  var locals = matinee.users.list()
+  var byName = {}
+  for (var i = 0; i < locals.length; i++) {
+    byName[String(locals[i].username).toLowerCase()] = locals[i]
+  }
+  var out = []
+  for (var j = 0; j < remoteUsers.length; j++) {
+    var remote = remoteUsers[j]
+    var wanted = overrides[String(remote.name).toLowerCase()] || remote.name
+    var local = byName[String(wanted).toLowerCase()] || null
+    out.push({
+      remoteId: remote.id,
+      remoteName: remote.name,
+      protected: remote.protected === true,
+      matineeId: local ? local.id : null,
+      matineeName: local ? local.username : null
+    })
+  }
+  return out
+}
+
+// The owner plus the Plex Home users are fetched
+// PIN-protected home users currenty cannot switched into without their PIN and are in that case flagged.
+function fetchRemoteUsers(token) {
+  var out = []
+  var me = plexRequest('GET', PLEXTV + '/api/v2/user', token)
+  out.push({ id: 'owner', name: String(me.username || me.title || 'owner') })
+  try {
+    var home = plexRequest('GET', PLEXTV + '/api/v2/home/users', token)
+    var users = (home && home.users) || []
+    for (var i = 0; i < users.length; i++) {
+      var u = users[i]
+      if (!u || !u.uuid) continue
+      if (u.admin === true) continue
+      out.push({
+        id: String(u.uuid),
+        name: String(u.username || u.title || u.uuid),
+        protected: u.protected === true
+      })
+    }
+  } catch (e) {
+    // No Plex Home -> owner only
+  }
+  return out
+}
+
+// Try to resolve the per-user PMS token
+function userToken(user, token) {
+  if (user.remoteId === 'owner') return token
+  var data = plexRequest('POST', PLEXTV + '/api/v2/home/users/' + encodeURIComponent(user.remoteId) + '/switch', token)
+  if (!data || !data.authToken) throw new Error('no token for home user ' + user.remoteName)
+  return String(data.authToken)
+}
+
+function guidsOf(item) {
+  var out = {}
+  var guids = (item && item.Guid) || []
+  for (var i = 0; i < guids.length; i++) {
+    var id = guids[i] && guids[i].id
+    if (!id) continue
+    var m = /^(tmdb|imdb|tvdb):\/\/(.+)$/.exec(String(id))
+    if (m) out[m[1]] = m[2]
+  }
+  return out
+}
+
+function providerQuery(kind, ids, season, episode) {
+  var q = { type: kind }
+  var tmdb = parseInt(ids.tmdb, 10)
+  var tvdb = parseInt(ids.tvdb, 10)
+  if (isFinite(tmdb) && tmdb > 0) q.tmdb = tmdb
+  if (isFinite(tvdb) && tvdb > 0) q.tvdb = tvdb
+  if (ids.imdb) q.imdb = ids.imdb
+  if (kind === 'episode') {
+    q.season = season
+    q.episode = episode
+  }
+  return q
+}
+
+function hasProviderIds(ids) {
+  return Boolean(ids.tmdb || ids.imdb || ids.tvdb)
+}
+
+function formatTime(ms) {
+  try {
+    return new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+  } catch (e) {
+    return String(ms)
+  }
+}
+
+// Converts Plex lastViewedAt to RFC3339
+function rfc3339(unixSeconds) {
+  var n = Number(unixSeconds)
+  if (!isFinite(n) || n <= 0) return ''
+  try {
+    return new Date(n * 1000).toISOString()
+  } catch (e) {
+    return ''
+  }
+}
+
+function sectionPage(token, sectionKey, itemType, offset) {
+  var url = baseUrl() + '/library/sections/' + encodeURIComponent(sectionKey) + '/all?' + qs({
+    type: itemType,
+    includeGuids: 1,
+    'X-Plex-Container-Start': offset,
+    'X-Plex-Container-Size': PAGE_SIZE
+  })
+  var data = plexRequest('GET', url, token)
+  return (data && data.MediaContainer) || {}
+}
+
+matinee.http.onRequest('status', function () {
+  var lines = []
+  var token = ownerToken()
+  if (!token) {
+    token = checkPin()
+  }
+  var pin = loadJSON('pin')
+  if (!token && pin && pin.code) {
+    return { body: jsonBody({ text: 'Waiting for the link: enter code ' + pin.code + ' at https://plex.tv/link and reopen this dialog.' }) }
+  }
+  if (!token) {
+    return { body: jsonBody({ text: 'Not linked. Use "Connect Plex account" (or paste a token) and save.' }) }
+  }
+  var cfg = matinee.getConfig()
+  if (!cfg.server_url) {
+    return { body: jsonBody({ text: 'Linked. Enter the Plex server URL and save.' }) }
+  }
+  try {
+    var identity = plexRequest('GET', baseUrl() + '/identity', token)
+    var mc = (identity && identity.MediaContainer) || {}
+    lines.push('Connected to Plex server (version ' + (mc.version || 'unknown') + ').')
+    var matched = matchUsers(fetchRemoteUsers(token))
+    var hits = []
+    var misses = []
+    for (var i = 0; i < matched.length; i++) {
+      if (matched[i].matineeId) hits.push(matched[i].remoteName)
+      else misses.push(matched[i].remoteName)
+    }
+    var line = matched.length + ' Plex users (owner + home), ' + hits.length + ' matched to Matinee accounts.'
+    if (misses.length) line += ' Unmatched: ' + misses.join(', ') + '.'
+    lines.push(line)
+    lines.push('External shared Plex accounts cannot be migrated: Plex exposes no server-side access to their watch data.')
+  } catch (e) {
+    return { body: jsonBody({ text: 'Not connected: ' + (e && e.message ? e.message : String(e)) + ' Check the server URL and link state.' }) }
+  }
+  return { body: jsonBody({ text: lines.join('\n') }) }
+})
+
+matinee.http.onRequest('users', function () {
+  var token = ownerToken() || checkPin()
+  if (!token) {
+    return { status: 400, body: jsonBody({ error: 'Link your Plex account first.' }) }
+  }
+  var matched = matchUsers(fetchRemoteUsers(token))
+  var options = []
+  for (var i = 0; i < matched.length; i++) {
+    var m = matched[i]
+    var label = m.remoteName + (m.matineeName ? ' -> ' + m.matineeName : ' (no Matinee match)')
+    if (m.protected) label += ' (PIN protected, skipped)'
+    options.push({ value: m.remoteId, label: label })
+  }
+  return { body: jsonBody({ options: options }) }
+})
+
+matinee.http.onRequest('run', function () {
+  var cfg = matinee.getConfig()
+  if (!cfg.server_url) {
+    return { status: 400, body: jsonBody({ error: 'Enter the Plex server URL first.' }) }
+  }
+  if (!ownerToken()) {
+    return { status: 400, body: jsonBody({ error: 'Link your Plex account first.' }) }
+  }
+  matinee.storage.set('run.request', '1')
+  return { body: jsonBody({ message: 'Migration queued, it starts within a minute.' }) }
+})
+
+matinee.http.onRequest('last-run', function () {
+  var lines = []
+  var cursor = loadJSON('run.cursor')
+  if (cursor) {
+    var user = cursor.users[cursor.userIdx]
+    lines.push(
+      'Running (' + (cursor.fullSync ? 'full sync' : 'additive') + '): user ' +
+      (cursor.userIdx + 1) + ' of ' + cursor.users.length +
+      (user ? ' (' + user.remoteName + ')' : '') + ', phase ' + cursor.phase + '.'
+    )
+  }
+  var last = loadJSON('run.last')
+  if (last && last.completedAt) {
+    lines.push('Last run: ' + formatTime(last.completedAt) + (last.fullSync ? ' (full sync).' : '.'))
+    for (var i = 0; i < (last.users || []).length; i++) {
+      var u = last.users[i]
+      lines.push(
+        u.name + ': ' + u.updated + ' updated, ' + u.skipped + ' already current, ' +
+        u.unmatched + ' unmatched' + (last.fullSync ? ', ' + u.unwatched + ' unwatched' : '') + '.'
+      )
+    }
+  }
+  if (!lines.length) lines.push('Never run.')
+  return { body: jsonBody({ text: lines.join('\n') }) }
+})
+
+function startRun() {
+  matinee.storage.delete('run.request')
+  var cfg = matinee.getConfig()
+  var token = ownerToken()
+  if (!token) {
+    matinee.log('migration skipped: Plex account not linked')
+    return null
+  }
+  var matched
+  try {
+    matched = matchUsers(fetchRemoteUsers(token))
+  } catch (e) {
+    matinee.log('migration skipped: ' + (e && e.message ? e.message : String(e)))
+    return null
+  }
+  var selected = cfg.users && cfg.users.length ? cfg.users : null
+  var users = []
+  for (var i = 0; i < matched.length; i++) {
+    var m = matched[i]
+    if (!m.matineeId) continue
+    if (selected && selected.indexOf(m.remoteId) === -1) continue
+    if (m.protected) {
+      matinee.log('skipping ' + m.remoteName + ': PIN protected home user')
+      continue
+    }
+    users.push({
+      remoteId: m.remoteId,
+      remoteName: m.remoteName,
+      matineeId: m.matineeId,
+      stats: { updated: 0, skipped: 0, unmatched: 0, unwatched: 0 }
+    })
+  }
+  if (!users.length) {
+    matinee.log('migration skipped: no selected Plex user matches a Matinee account')
+    return null
+  }
+  var cursor = {
+    users: users,
+    userIdx: 0,
+    phase: 'sections',
+    sections: [],
+    sectionIdx: 0,
+    offset: 0,
+    fullSync: cfg.full_sync === true,
+    startedAt: Date.now()
+  }
+  saveJSON('run.cursor', cursor)
+  matinee.log('migration started: ' + users.length + ' user(s), ' + (cursor.fullSync ? 'full sync' : 'additive'))
+  return cursor
+}
+
+// List the movie and show sections with the current user's token -> so per-user library restrictions apply naturally.
+function stepSections(cursor) {
+  var user = cursor.users[cursor.userIdx]
+  var token = userToken(user, ownerToken())
+  user.token = token
+  var data = plexRequest('GET', baseUrl() + '/library/sections', token)
+  var dirs = ((data && data.MediaContainer) || {}).Directory || []
+  cursor.sections = []
+  for (var i = 0; i < dirs.length; i++) {
+    var d = dirs[i]
+    if (!d || !d.key) continue
+    if (d.type === 'movie') cursor.sections.push({ key: String(d.key), kind: 'movie' })
+    else if (d.type === 'show') cursor.sections.push({ key: String(d.key), kind: 'show' })
+  }
+  saveJSON('run.seriesmap', {})
+  cursor.sectionIdx = 0
+  cursor.offset = 0
+  cursor.phase = cursor.sections.length ? nextSectionPhase(cursor) : 'nextuser'
+}
+
+function nextSectionPhase(cursor) {
+  return cursor.sections[cursor.sectionIdx].kind === 'movie' ? 'movies' : 'shows'
+}
+
+// Applies one source item's watch data to every mapped local file
+function applyItem(user, item, files, states, universe, sourceWatched, fullSync) {
+  var watched = Number(item.viewCount) > 0
+  var position = Math.floor(Number(item.viewOffset || 0) / 1000)
+  var lastPlayed = rfc3339(item.lastViewedAt)
+
+  for (var i = 0; i < files.length; i++) {
+    var fileId = files[i]
+    if (fullSync) {
+      universe[fileId] = true
+      if (watched) sourceWatched[fileId] = true
+    }
+    var existing = states[fileId]
+    if (fullSync) {
+      var samePos = existing && Math.floor(existing.position_seconds) === position
+      if (existing && existing.watched === watched && samePos) {
+        user.stats.skipped++
+        continue
+      }
+      var opts = { watched: watched, positionSeconds: position }
+      if (lastPlayed) opts.lastPlayedAt = lastPlayed
+      matinee.watch.setState(user.matineeId, fileId, opts)
+      user.stats.updated++
+      continue
+    }
+    if (watched) {
+      if (existing && existing.watched) {
+        user.stats.skipped++
+        continue
+      }
+      var wopts = { watched: true }
+      if (lastPlayed) wopts.lastPlayedAt = lastPlayed
+      matinee.watch.setState(user.matineeId, fileId, wopts)
+      user.stats.updated++
+      continue
+    }
+    if (position > 0) {
+      if (existing && (existing.watched || existing.position_seconds >= position)) {
+        user.stats.skipped++
+        continue
+      }
+      var popts = { positionSeconds: position }
+      if (lastPlayed) popts.lastPlayedAt = lastPlayed
+      matinee.watch.setState(user.matineeId, fileId, popts)
+      user.stats.updated++
+    }
+  }
+}
+
+var stateCache = null
+
+function loadStates(user) {
+  if (!stateCache || stateCache.userId !== user.matineeId) {
+    var map = {}
+    var stored = matinee.watch.getStates(user.matineeId)
+    for (var s = 0; s < stored.length; s++) map[stored[s].media_file_id] = stored[s]
+    stateCache = { userId: user.matineeId, map: map }
+  }
+  return stateCache.map
+}
+
+function advancePage(cursor, container) {
+  cursor.offset += PAGE_SIZE
+  var total = Number(container.totalSize)
+  if (!isFinite(total)) total = Number(container.size) || 0
+  return cursor.offset >= total || !(container.Metadata || []).length
+}
+
+function stepMovies(cursor) {
+  var user = cursor.users[cursor.userIdx]
+  var container = sectionPage(user.token, cursor.sections[cursor.sectionIdx].key, 1, cursor.offset)
+  var items = container.Metadata || []
+  var states = loadStates(user)
+  var universe = cursor.fullSync ? loadJSON('run.universe') || {} : {}
+  var sourceWatched = cursor.fullSync ? loadJSON('run.watched') || {} : {}
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    if (!item) continue
+    var relevant = cursor.fullSync || Number(item.viewCount) > 0 || Number(item.viewOffset) > 0
+    if (!relevant) continue
+    var ids = guidsOf(item)
+    if (!hasProviderIds(ids)) {
+      user.stats.unmatched++
+      continue
+    }
+    var files = matinee.media.findByProviderIds(providerQuery('movie', ids))
+    if (!files.length) {
+      user.stats.unmatched++
+      continue
+    }
+    applyItem(user, item, files, states, universe, sourceWatched, cursor.fullSync)
+  }
+  if (cursor.fullSync) {
+    saveJSON('run.universe', universe)
+    saveJSON('run.watched', sourceWatched)
+  }
+  if (advancePage(cursor, container)) {
+    cursor.offset = 0
+    cursor.phase = 'nextsection'
+  }
+}
+
+function stepShows(cursor) {
+  var user = cursor.users[cursor.userIdx]
+  var container = sectionPage(user.token, cursor.sections[cursor.sectionIdx].key, 2, cursor.offset)
+  var items = container.Metadata || []
+  var map = loadJSON('run.seriesmap') || {}
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    if (item && item.ratingKey) map[String(item.ratingKey)] = guidsOf(item)
+  }
+  saveJSON('run.seriesmap', map)
+  if (advancePage(cursor, container)) {
+    cursor.offset = 0
+    cursor.phase = 'episodes'
+  }
+}
+
+function stepEpisodes(cursor) {
+  var user = cursor.users[cursor.userIdx]
+  var container = sectionPage(user.token, cursor.sections[cursor.sectionIdx].key, 4, cursor.offset)
+  var items = container.Metadata || []
+  var map = loadJSON('run.seriesmap') || {}
+  var states = loadStates(user)
+  var universe = cursor.fullSync ? loadJSON('run.universe') || {} : {}
+  var sourceWatched = cursor.fullSync ? loadJSON('run.watched') || {} : {}
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    if (!item) continue
+    var relevant = cursor.fullSync || Number(item.viewCount) > 0 || Number(item.viewOffset) > 0
+    if (!relevant) continue
+    var ids = map[String(item.grandparentRatingKey || '')] || {}
+    var season = Number(item.parentIndex)
+    var episode = Number(item.index)
+    if (!hasProviderIds(ids) || !isFinite(season) || !isFinite(episode)) {
+      user.stats.unmatched++
+      continue
+    }
+    var files = matinee.media.findByProviderIds(providerQuery('episode', ids, season, episode))
+    if (!files.length) {
+      user.stats.unmatched++
+      continue
+    }
+    applyItem(user, item, files, states, universe, sourceWatched, cursor.fullSync)
+  }
+  if (cursor.fullSync) {
+    saveJSON('run.universe', universe)
+    saveJSON('run.watched', sourceWatched)
+  }
+  if (advancePage(cursor, container)) {
+    cursor.offset = 0
+    cursor.phase = 'nextsection'
+  }
+}
+
+// For full sync only -> unwatch local files the source knows about but no longer has as watched.
+function stepReconcile(cursor) {
+  var user = cursor.users[cursor.userIdx]
+  var universe = loadJSON('run.universe') || {}
+  var sourceWatched = loadJSON('run.watched') || {}
+  var stored = matinee.watch.getStates(user.matineeId)
+  for (var i = 0; i < stored.length; i++) {
+    var st = stored[i]
+    if (!st.watched) continue
+    if (!universe[st.media_file_id]) continue
+    if (sourceWatched[st.media_file_id]) continue
+    matinee.watch.setState(user.matineeId, st.media_file_id, { watched: false, positionSeconds: 0 })
+    user.stats.unwatched++
+  }
+  cursor.phase = 'nextuser'
+}
+
+function stepNextSection(cursor) {
+  cursor.sectionIdx++
+  cursor.offset = 0
+  if (cursor.sectionIdx < cursor.sections.length) {
+    cursor.phase = nextSectionPhase(cursor)
+    return
+  }
+  cursor.phase = cursor.fullSync ? 'reconcile' : 'nextuser'
+}
+
+// Goes to the next user or finishes the run with a summary.
+function stepNextUser(cursor) {
+  var done = cursor.users[cursor.userIdx]
+  matinee.log(
+    'migrated ' + done.remoteName + ': ' + done.stats.updated + ' updated, ' +
+    done.stats.skipped + ' already current, ' + done.stats.unmatched + ' unmatched'
+  )
+  matinee.storage.delete('run.universe')
+  matinee.storage.delete('run.watched')
+  cursor.userIdx++
+  cursor.phase = 'sections'
+  cursor.offset = 0
+  if (cursor.userIdx >= cursor.users.length) {
+    var summary = { completedAt: Date.now(), fullSync: cursor.fullSync, users: [] }
+    for (var i = 0; i < cursor.users.length; i++) {
+      var u = cursor.users[i]
+      summary.users.push({
+        name: u.remoteName,
+        updated: u.stats.updated,
+        skipped: u.stats.skipped,
+        unmatched: u.stats.unmatched,
+        unwatched: u.stats.unwatched
+      })
+    }
+    saveJSON('run.last', summary)
+    matinee.storage.delete('run.cursor')
+    matinee.storage.delete('run.seriesmap')
+    matinee.log('migration complete: ' + cursor.users.length + ' user(s)')
+    return false
+  }
+  return true
+}
+
+function step(cursor) {
+  try {
+    if (cursor.phase === 'sections') stepSections(cursor)
+    else if (cursor.phase === 'movies') stepMovies(cursor)
+    else if (cursor.phase === 'shows') stepShows(cursor)
+    else if (cursor.phase === 'episodes') stepEpisodes(cursor)
+    else if (cursor.phase === 'reconcile') stepReconcile(cursor)
+    if (cursor.phase === 'nextsection') stepNextSection(cursor)
+    if (cursor.phase === 'nextuser' && !stepNextUser(cursor)) return false
+    saveJSON('run.cursor', cursor)
+    return true
+  } catch (e) {
+    saveJSON('run.cursor', cursor)
+    matinee.log('migration error (will retry): ' + (e && e.message ? e.message : String(e)))
+    return false
+  }
+}
+
+matinee.schedule(1, function () {
+  stateCache = null
+  if (!ownerToken()) checkPin()
+
+  var cursor = loadJSON('run.cursor')
+  if (!cursor) {
+    if (matinee.storage.get('run.request') !== '1') return
+    cursor = startRun()
+    if (!cursor) return
+  }
+  for (var i = 0; i < PAGES_PER_TICK; i++) {
+    if (!step(cursor)) break
+    cursor = loadJSON('run.cursor')
+    if (!cursor) break
+  }
+})
+
+matinee.log('migrate-plex v' + matinee.manifest.version + ' loaded')
