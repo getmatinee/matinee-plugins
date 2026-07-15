@@ -14,6 +14,10 @@ var PAGES_PER_TICK = 5
 var PLEXTV = 'https://plex.tv'
 var PIN_MAX_AGE_MS = 15 * 60 * 1000
 
+function dbg(msg) {
+  if (typeof matinee.debug === 'function') matinee.debug(msg)
+}
+
 function loadJSON(key) {
   var raw = matinee.storage.get(key)
   if (!raw) return null
@@ -108,6 +112,7 @@ function checkPin() {
       matinee.log('Plex account linked')
       return String(data.authToken)
     }
+    dbg('pin poll: not yet authorized')
   } catch (e) {
     // invalid pin
     matinee.storage.delete('pin')
@@ -206,6 +211,7 @@ function userToken(user, token) {
   if (user.remoteId === 'owner') return token
   var data = plexRequest('POST', PLEXTV + '/api/v2/home/users/' + encodeURIComponent(user.remoteId) + '/switch', token)
   if (!data || !data.authToken) throw new Error('no token for home user ' + user.remoteName)
+  dbg('resolved token for home user ' + user.remoteName)
   return String(data.authToken)
 }
 
@@ -415,6 +421,7 @@ function startRun() {
 // List the movie and show sections with the current user's token -> so per-user library restrictions apply naturally.
 function stepSections(cursor) {
   var user = cursor.users[cursor.userIdx]
+  matinee.log('migrating ' + user.remoteName + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')')
   var token = userToken(user, ownerToken())
   user.token = token
   var data = plexRequest('GET', baseUrl() + '/library/sections', token)
@@ -427,6 +434,7 @@ function stepSections(cursor) {
     else if (d.type === 'show') cursor.sections.push({ key: String(d.key), kind: 'show' })
   }
   saveJSON('run.seriesmap', {})
+  dbg(user.remoteName + ': ' + cursor.sections.length + ' section(s)')
   cursor.sectionIdx = 0
   cursor.offset = 0
   cursor.phase = cursor.sections.length ? nextSectionPhase(cursor) : 'nextuser'
@@ -498,9 +506,15 @@ function loadStates(user) {
 }
 
 function advancePage(cursor, container) {
-  cursor.offset += PAGE_SIZE
   var total = Number(container.totalSize)
   if (!isFinite(total)) total = Number(container.size) || 0
+  var user = cursor.users[cursor.userIdx]
+  dbg(
+    user.remoteName + ' section ' + cursor.sections[cursor.sectionIdx].key + ' ' + cursor.phase + ': ' +
+    (container.Metadata || []).length + ' items at offset ' + cursor.offset + ' of ' + total +
+    ' (' + user.stats.updated + ' updated, ' + user.stats.skipped + ' current, ' + user.stats.unmatched + ' unmatched)'
+  )
+  cursor.offset += PAGE_SIZE
   return cursor.offset >= total || !(container.Metadata || []).length
 }
 
@@ -605,6 +619,7 @@ function stepReconcile(cursor) {
     matinee.watch.setState(user.matineeId, st.media_file_id, { watched: false, positionSeconds: 0 })
     user.stats.unwatched++
   }
+  dbg('reconcile ' + user.remoteName + ': ' + user.stats.unwatched + ' unwatched')
   cursor.phase = 'nextuser'
 }
 
@@ -623,7 +638,8 @@ function stepNextUser(cursor) {
   var done = cursor.users[cursor.userIdx]
   matinee.log(
     'migrated ' + done.remoteName + ': ' + done.stats.updated + ' updated, ' +
-    done.stats.skipped + ' already current, ' + done.stats.unmatched + ' unmatched'
+    done.stats.skipped + ' already current, ' + done.stats.unmatched + ' unmatched' +
+    (cursor.fullSync ? ', ' + done.stats.unwatched + ' unwatched' : '')
   )
   matinee.storage.delete('run.universe')
   matinee.storage.delete('run.watched')
@@ -660,11 +676,13 @@ function step(cursor) {
     else if (cursor.phase === 'reconcile') stepReconcile(cursor)
     if (cursor.phase === 'nextsection') stepNextSection(cursor)
     if (cursor.phase === 'nextuser' && !stepNextUser(cursor)) return false
+    if (cursor.retries) cursor.retries = 0
     saveJSON('run.cursor', cursor)
     return true
   } catch (e) {
+    cursor.retries = (cursor.retries || 0) + 1
     saveJSON('run.cursor', cursor)
-    matinee.log('migration error (will retry): ' + (e && e.message ? e.message : String(e)))
+    matinee.log('migration error (attempt ' + cursor.retries + ', will retry): ' + (e && e.message ? e.message : String(e)))
     return false
   }
 }

@@ -6,8 +6,16 @@
 // Hello World
 // A minimal Matinee example plugin for devs and reference
 
+// Verbose detail goes through matinee.debug: it only shows while the server's
+// debug logging toggle is on. Feature-detect it so the plugin also runs on
+// servers without the binding.
+function dbg(msg) {
+  if (typeof matinee.debug === 'function') matinee.debug(msg)
+}
+
 var cfg = matinee.getConfig()
 matinee.log('hello-world v' + matinee.manifest.version + ' loaded' + (cfg.greeting ? ': ' + cfg.greeting : ''))
+dbg('config keys: ' + Object.keys(cfg).join(', '))
 
 // media.added count and report once per scan
 var added = 0

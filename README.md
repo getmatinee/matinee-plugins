@@ -98,6 +98,10 @@ entry. Rules:
   log once per media item: `media.added` fires thousands of times during a
   scan. Count, and report once on `scan.completed`, the way `hello-world`
   does.
+- Use `matinee.debug()` for page or progress detail (only shown while the
+  server's debug logging toggle is on) and `matinee.log()` for phase
+  summaries. The host logs every `matinee.http.fetch` at debug level
+  automatically, so do not log your own HTTP calls.
 
 `scripts/validate.py` enforces the manifest rules and the typography rule,
 and runs in CI on every PR.

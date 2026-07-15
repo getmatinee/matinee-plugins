@@ -156,6 +156,8 @@ interface MatineeHost {
   version: number
   getConfig(): Record<string, unknown>
   log(...args: unknown[]): void
+  // Dropped unless the server's debug logging toggle is on.
+  debug(...args: unknown[]): void
   http: {
     fetch(url: string, options?: MatineeFetchOptions): MatineeFetchResult
     onRequest(name: string, handler: (req: MatineeHookRequest) => MatineeHookResponse | void): void

@@ -1,7 +1,7 @@
 {
   "id": "migrate-emby",
   "name": "Emby Watch State Migration",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Migrate watched flags and resume positions from an Emby server into Matinee, per user.",
   "author": "Anna Reber",
   "homepage": "https://github.com/getmatinee/matinee-plugins",

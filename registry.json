@@ -11,7 +11,7 @@
       "scopes": ["storage"],
       "versions": [
         {
-          "version": "1.0.1",
+          "version": "1.0.2",
           "matinee_min": "2.1.0",
           "source": "plugins/hello-world/"
         }
@@ -27,7 +27,7 @@
       "scopes": ["network", "storage", "watch-states"],
       "versions": [
         {
-          "version": "1.0.0",
+          "version": "1.0.1",
           "matinee_min": "2.2.0",
           "source": "plugins/migrate-emby/"
         }
@@ -43,7 +43,7 @@
       "scopes": ["network", "storage", "watch-states"],
       "versions": [
         {
-          "version": "1.0.0",
+          "version": "1.0.1",
           "matinee_min": "2.2.0",
           "source": "plugins/migrate-plex/"
         }
@@ -59,7 +59,7 @@
       "scopes": ["network", "storage", "playlists"],
       "versions": [
         {
-          "version": "1.0.0",
+          "version": "1.0.1",
           "matinee_min": "2.1.0",
           "source": "plugins/spotify-sync/"
         }

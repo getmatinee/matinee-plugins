@@ -12,6 +12,10 @@
 var PAGE_SIZE = 200
 var PAGES_PER_TICK = 5
 
+function dbg(msg) {
+  if (typeof matinee.debug === 'function') matinee.debug(msg)
+}
+
 function loadJSON(key) {
   var raw = matinee.storage.get(key)
   if (!raw) return null
@@ -303,8 +307,14 @@ function stepSeriesMap(cursor) {
     if (items[i] && items[i].Id) map[String(items[i].Id)] = providerIdsOf(items[i])
   }
   saveJSON('run.seriesmap', map)
+  var mapped = 0
+  for (var k in map) {
+    if (Object.prototype.hasOwnProperty.call(map, k)) mapped++
+  }
+  dbg('series map: ' + items.length + ' series at offset ' + cursor.offset + ' of ' + (Number(page.TotalRecordCount) || 0) + ', ' + mapped + ' mapped')
   cursor.offset += PAGE_SIZE
   if (!items.length || cursor.offset >= (Number(page.TotalRecordCount) || 0)) {
+    matinee.log('series map complete: ' + mapped + ' series')
     cursor.phase = 'items'
     cursor.pass = 0
     cursor.offset = 0
@@ -381,6 +391,9 @@ function applyItem(user, item, files, states, universe, sourceWatched, fullSync)
 
 function stepItems(cursor) {
   var user = cursor.users[cursor.userIdx]
+  if (cursor.offset === 0 && cursor.pass === 0) {
+    matinee.log('migrating ' + user.remoteName + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')')
+  }
   var seriesMap = loadJSON('run.seriesmap') || {}
   var params = {
     Recursive: 'true',
@@ -414,6 +427,11 @@ function stepItems(cursor) {
     saveJSON('run.universe', universe)
     saveJSON('run.watched', sourceWatched)
   }
+  dbg(
+    user.remoteName + (cursor.fullSync ? '' : ' pass ' + (cursor.pass + 1)) + ': ' + items.length +
+    ' items at offset ' + cursor.offset + ' of ' + (Number(page.TotalRecordCount) || 0) +
+    ' (' + user.stats.updated + ' updated, ' + user.stats.skipped + ' current, ' + user.stats.unmatched + ' unmatched)'
+  )
 
   cursor.offset += PAGE_SIZE
   if (!items.length || cursor.offset >= (Number(page.TotalRecordCount) || 0)) {
@@ -440,6 +458,7 @@ function stepReconcile(cursor) {
     matinee.watch.setState(user.matineeId, st.media_file_id, { watched: false, positionSeconds: 0 })
     user.stats.unwatched++
   }
+  dbg('reconcile ' + user.remoteName + ': ' + user.stats.unwatched + ' unwatched')
   cursor.phase = 'nextuser'
 }
 
@@ -448,7 +467,8 @@ function stepNextUser(cursor) {
   var done = cursor.users[cursor.userIdx]
   matinee.log(
     'migrated ' + done.remoteName + ': ' + done.stats.updated + ' updated, ' +
-    done.stats.skipped + ' already current, ' + done.stats.unmatched + ' unmatched'
+    done.stats.skipped + ' already current, ' + done.stats.unmatched + ' unmatched' +
+    (cursor.fullSync ? ', ' + done.stats.unwatched + ' unwatched' : '')
   )
   matinee.storage.delete('run.universe')
   matinee.storage.delete('run.watched')
@@ -483,11 +503,13 @@ function step(cursor) {
     else if (cursor.phase === 'items') stepItems(cursor)
     else if (cursor.phase === 'reconcile') stepReconcile(cursor)
     if (cursor.phase === 'nextuser' && !stepNextUser(cursor)) return false
+    if (cursor.retries) cursor.retries = 0
     saveJSON('run.cursor', cursor)
     return true
   } catch (e) {
+    cursor.retries = (cursor.retries || 0) + 1
     saveJSON('run.cursor', cursor)
-    matinee.log('migration error (will retry): ' + (e && e.message ? e.message : String(e)))
+    matinee.log('migration error (attempt ' + cursor.retries + ', will retry): ' + (e && e.message ? e.message : String(e)))
     return false
   }
 }

@@ -17,6 +17,10 @@ var ACCOUNTS = 'https://accounts.spotify.com'
 var API = 'https://api.spotify.com'
 var OAUTH_SCOPE = 'playlist-read-private playlist-read-collaborative'
 
+function dbg(msg) {
+  if (typeof matinee.debug === 'function') matinee.debug(msg)
+}
+
 function loadJSON(key) {
   var raw = matinee.storage.get(key)
   if (!raw) return null
@@ -571,6 +575,7 @@ function syncStep(cursor) {
       cursor.matineePlaylistId = matinee.playlists.create(String(cfg.owner_username || ''), cursor.spotifyName)
       matinee.playlists.clearGhostTracks(cursor.matineePlaylistId, SOURCE)
       saveJSON('sync.cursor', cursor)
+      dbg('playlist "' + cursor.spotifyName + '" (' + (cursor.idx + 1) + ' of ' + cursor.playlists.length + '): starting')
     }
 
     var page = spotifyGet(
@@ -610,6 +615,10 @@ function syncStep(cursor) {
       }
     }
 
+    dbg(
+      'playlist "' + cursor.spotifyName + '": ' + items.length + ' tracks at offset ' + cursor.offset +
+      ' of ' + cursor.total + ' (' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available)'
+    )
     cursor.offset += PAGE_SIZE
     if (cursor.offset >= cursor.total) {
       matinee.log('synced "' + cursor.spotifyName + '" (' + cursor.total + ' tracks)')
@@ -625,12 +634,18 @@ function syncStep(cursor) {
         return
       }
     }
+    if (cursor.retries) cursor.retries = 0
     saveJSON('sync.cursor', cursor)
   } catch (e) {
     // rateLimited -> resume later
+    if (e && (e.rateLimited || e.expired)) {
+      saveJSON('sync.cursor', cursor)
+      dbg('sync paused: ' + (e.rateLimited ? 'rate limited' : 'token expired'))
+      return
+    }
+    cursor.retries = (cursor.retries || 0) + 1
     saveJSON('sync.cursor', cursor)
-    if (e && (e.rateLimited || e.expired)) return
-    matinee.log('sync error (will retry): ' + (e && e.message ? e.message : String(e)))
+    matinee.log('sync error (attempt ' + cursor.retries + ', will retry): ' + (e && e.message ? e.message : String(e)))
   }
 }
 

@@ -107,6 +107,7 @@ matinee.http.onCallback(function (req) {
 | `matinee.version` | - | host API version (currently `1`) |
 | `matinee.getConfig()` | - | admin-entered config values |
 | `matinee.log(...args)` | - | log to the plugin's log ring (visible in the UI) and the server log |
+| `matinee.debug(...args)` | - | verbose logging; dropped unless the server's debug logging toggle is on |
 | `matinee.storage.get(key)` / `.set(key, value)` / `.delete(key)` | - | persistent per-plugin key/value store (strings; JSON-encode objects) |
 | `matinee.on(event, handler)` | - | subscribe to server events |
 | `matinee.schedule(everyMinutes, fn)` | - | recurring task; first run one interval after load; minimum 1 minute |
@@ -130,6 +131,18 @@ Scopes are shown to the admin at install time, and the server enforces them:
   `matinee.watch` do not exist.
 - `storage`: declare it when you persist data; `matinee.storage` is currently
   available regardless, but declare what you use.
+
+### Debug logging
+
+`matinee.log` is for phase summaries (started, per-user result, completed);
+use `matinee.debug` for page/progress detail. Debug lines only exist while
+the admin has Settings -> Server -> Debug logging enabled (toggling applies
+instantly, no reload); while it is off they are dropped, not buffered, so
+enable debug before starting a run.
+
+The host also logs every `matinee.http.fetch` at debug level automatically,
+with method, endpoint (query string stripped), status and duration.
+Plugins do not need to log their own HTTP calls.
 
 ### Limits
 

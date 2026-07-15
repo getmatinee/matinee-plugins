@@ -1,7 +1,7 @@
 {
   "id": "spotify-sync",
   "name": "Spotify Playlist Sync",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Sync your Spotify playlists into Matinee. Tracks are matched against your music libraries, songs you don't have appear as greyed-out 'not available' entries.",
   "author": "Michael André Reber",
   "homepage": "https://github.com/getmatinee/matinee-plugins",

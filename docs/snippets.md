@@ -5,6 +5,14 @@ single-file and copy these helpers verbatim instead of importing a shared
 module. Fix a bug here first, then in every plugin that carries the copy
 (`grep -l 'function loadJSON' plugins/*/main.js`).
 
+## Debug logging
+
+```js
+function dbg(msg) {
+  if (typeof matinee.debug === 'function') matinee.debug(msg)
+}
+```
+
 ## Storage as JSON
 
 ```js
