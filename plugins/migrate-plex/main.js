@@ -5,7 +5,7 @@
 
 // Plex Watch State Migration
 // The admin links a Plex account via the plex.tv/link PIN flow (or uses a token), maps Plex users to Matinee accounts, and a scheduler-driven job copies watched flags and resume positions per user.
-// Owner and Plex Home users are supported. -> external shared accounts cannot be read with the owner token and are excluded.
+// External shared users migrate watched flags only, from the server history.
 
 'use strict'
 
@@ -167,6 +167,8 @@ function matchUsers(remoteUsers) {
       remoteId: remote.id,
       remoteName: remote.name,
       protected: remote.protected === true,
+      external: remote.external === true,
+      accountId: remote.accountId || null,
       matineeId: local ? local.id : null,
       matineeName: local ? local.username : null
     })
@@ -200,20 +202,22 @@ function resolvePairs(matched, logSkips) {
         if (logSkips) matinee.log('skipping ' + m.remoteName + ': assigned Matinee user no longer exists')
         continue
       }
-      out.push({ remoteId: m.remoteId, remoteName: m.remoteName, matineeId: local.id, matineeName: local.username })
+      out.push({ remoteId: m.remoteId, remoteName: m.remoteName, external: m.external, accountId: m.accountId, matineeId: local.id, matineeName: local.username })
     } else if (m.matineeId) {
-      out.push({ remoteId: m.remoteId, remoteName: m.remoteName, matineeId: m.matineeId, matineeName: m.matineeName })
+      out.push({ remoteId: m.remoteId, remoteName: m.remoteName, external: m.external, accountId: m.accountId, matineeId: m.matineeId, matineeName: m.matineeName })
     }
   }
   return out
 }
 
-// The owner plus the Plex Home users are fetched
-// PIN-protected home users currenty cannot switched into without their PIN and are in that case flagged.
+// The owner, the Plex Home users and the external shared accounts are fetched. the last can only migrate watched flags only -> read from the server's playback history
 function fetchRemoteUsers(token) {
   var out = []
+  var seen = {}
   var me = plexRequest('GET', PLEXTV + '/api/v2/user', token)
-  out.push({ id: 'owner', name: String(me.username || me.title || 'owner') })
+  var ownerName = String(me.username || me.title || 'owner')
+  out.push({ id: 'owner', name: ownerName })
+  seen[ownerName.toLowerCase()] = true
   try {
     var home = plexRequest('GET', PLEXTV + '/api/v2/home/users', token)
     var users = (home && home.users) || []
@@ -221,14 +225,26 @@ function fetchRemoteUsers(token) {
       var u = users[i]
       if (!u || !u.uuid) continue
       if (u.admin === true) continue
-      out.push({
-        id: String(u.uuid),
-        name: String(u.username || u.title || u.uuid),
-        protected: u.protected === true
-      })
+      var hname = String(u.username || u.title || u.uuid)
+      seen[hname.toLowerCase()] = true
+      out.push({ id: String(u.uuid), name: hname, protected: u.protected === true })
     }
   } catch (e) {
     // No Plex Home -> owner only
+  }
+  try {
+    var accounts = plexRequest('GET', baseUrl() + '/accounts', token)
+    var list = ((accounts && accounts.MediaContainer) || {}).Account || []
+    for (var j = 0; j < list.length; j++) {
+      var a = list[j]
+      if (!a || String(a.id) === '1' || !a.name) continue
+      var aname = String(a.name)
+      if (seen[aname.toLowerCase()]) continue
+      seen[aname.toLowerCase()] = true
+      out.push({ id: 'acct:' + a.id, accountId: String(a.id), name: aname, external: true })
+    }
+  } catch (e) {
+    // No server-side accounts endpoint -> owner + home only
   }
   return out
 }
@@ -362,8 +378,9 @@ matinee.http.onRequest('users', function () {
     if (m.protected) {
       entry.disabled = true
       entry.note = 'PIN protected, cannot be migrated'
-    } else if (m.matineeId) {
-      suggested[m.remoteId] = m.matineeId
+    } else {
+      if (m.external) entry.note = 'Watched flags only (from Plex history)'
+      if (m.matineeId) suggested[m.remoteId] = m.matineeId
     }
     remote.push(entry)
   }
@@ -392,6 +409,7 @@ matinee.http.onRequest('run', function () {
 
 function runProgress(cursor) {
   var w = cursor.sections.length ? Math.min(cursor.sectionIdx / cursor.sections.length, 1) : 0
+  if (cursor.phase === 'history') w = 0.5
   if (cursor.phase === 'reconcile' || cursor.phase === 'nextuser') w = 1
   var base = cursor.users.length ? (cursor.userIdx + w) / cursor.users.length : 0
   return Math.min(99, Math.floor(base * 100))
@@ -452,6 +470,8 @@ function startRun() {
     users.push({
       remoteId: m.remoteId,
       remoteName: m.remoteName,
+      external: m.external === true,
+      accountId: m.accountId || null,
       matineeId: m.matineeId,
       stats: { updated: 0, skipped: 0, unmatched: 0, unwatched: 0 }
     })
@@ -479,6 +499,11 @@ function startRun() {
 function stepSections(cursor) {
   var user = cursor.users[cursor.userIdx]
   matinee.log('migrating ' + user.remoteName + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')')
+  if (user.external) {
+    cursor.offset = 0
+    cursor.phase = 'history'
+    return
+  }
   var token = userToken(user, ownerToken())
   user.token = token
   var data = plexRequest('GET', baseUrl() + '/library/sections', token)
@@ -690,6 +715,78 @@ function stepNextSection(cursor) {
   cursor.phase = cursor.fullSync ? 'reconcile' : 'nextuser'
 }
 
+// Resolves Plex ratingKey to its provider ids, cached across the run.
+function guidsForRatingKey(ratingKey) {
+  if (!ratingKey) return {}
+  var map = loadJSON('run.rkmap') || {}
+  var key = String(ratingKey)
+  if (Object.prototype.hasOwnProperty.call(map, key)) return map[key]
+  var ids = {}
+  try {
+    var data = plexRequest('GET', baseUrl() + '/library/metadata/' + encodeURIComponent(key) + '?includeGuids=1', ownerToken())
+    var meta = ((data && data.MediaContainer) || {}).Metadata || []
+    if (meta.length) ids = guidsOf(meta[0])
+  } catch (e) {
+    // unresolvable ratingKey
+  }
+  map[key] = ids
+  saveJSON('run.rkmap', map)
+  return ids
+}
+
+function stepHistory(cursor) {
+  var user = cursor.users[cursor.userIdx]
+  var url = baseUrl() + '/status/sessions/history/all?' + qs({
+    accountID: user.accountId,
+    'X-Plex-Container-Start': cursor.offset,
+    'X-Plex-Container-Size': PAGE_SIZE,
+    sort: 'viewedAt:desc'
+  })
+  var container = ((plexRequest('GET', url, ownerToken()) || {}).MediaContainer) || {}
+  var items = container.Metadata || []
+  var states = loadStates(user)
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    if (!item) continue
+    var files = []
+    if (item.type === 'movie') {
+      var mids = guidsForRatingKey(item.ratingKey)
+      if (hasProviderIds(mids)) files = matinee.media.findByProviderIds(providerQuery('movie', mids))
+    } else if (item.type === 'episode') {
+      var sids = guidsForRatingKey(item.grandparentRatingKey)
+      var season = Number(item.parentIndex)
+      var episode = Number(item.index)
+      if (hasProviderIds(sids) && isFinite(season) && isFinite(episode)) {
+        files = matinee.media.findByProviderIds(providerQuery('episode', sids, season, episode))
+      }
+    }
+    if (!files.length) {
+      user.stats.unmatched++
+      continue
+    }
+    var lastPlayed = rfc3339(item.viewedAt)
+    for (var f = 0; f < files.length; f++) {
+      var existing = states[files[f]]
+      if (existing && existing.watched) {
+        user.stats.skipped++
+        continue
+      }
+      var opts = { watched: true }
+      if (lastPlayed) opts.lastPlayedAt = lastPlayed
+      matinee.watch.setState(user.matineeId, files[f], opts)
+      user.stats.updated++
+    }
+  }
+  var total = Number(container.totalSize)
+  if (!isFinite(total)) total = Number(container.size) || 0
+  dbg(user.remoteName + ' history: ' + items.length + ' at offset ' + cursor.offset + ' of ' + total +
+    ' (' + user.stats.updated + ' updated, ' + user.stats.skipped + ' current, ' + user.stats.unmatched + ' unmatched)')
+  cursor.offset += PAGE_SIZE
+  if (cursor.offset >= total || !items.length) {
+    cursor.phase = 'nextuser'
+  }
+}
+
 // Goes to the next user or finishes the run with a summary.
 function stepNextUser(cursor) {
   var done = cursor.users[cursor.userIdx]
@@ -718,6 +815,7 @@ function stepNextUser(cursor) {
     saveJSON('run.last', summary)
     matinee.storage.delete('run.cursor')
     matinee.storage.delete('run.seriesmap')
+    matinee.storage.delete('run.rkmap')
     matinee.log('migration complete: ' + cursor.users.length + ' user(s)')
     act({ key: 'migration', done: true, message: 'Plex migration complete: ' + cursor.users.length + ' user(s)' })
     return false
@@ -728,6 +826,7 @@ function stepNextUser(cursor) {
 function step(cursor) {
   try {
     if (cursor.phase === 'sections') stepSections(cursor)
+    else if (cursor.phase === 'history') stepHistory(cursor)
     else if (cursor.phase === 'movies') stepMovies(cursor)
     else if (cursor.phase === 'shows') stepShows(cursor)
     else if (cursor.phase === 'episodes') stepEpisodes(cursor)
