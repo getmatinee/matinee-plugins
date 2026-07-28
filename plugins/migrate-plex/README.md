@@ -5,9 +5,13 @@ per user. Re-runnable: by default it only adds progress and never unwatches.
 
 ## What it covers
 
-- The server owner and **Plex Home** users, including Home users without a
-  PIN. External shared accounts (full Plex accounts you shared libraries
-  with) cannot be read through the owner token and are not migrated.
+- The server owner and **Plex Home** users (including Home users without a
+  PIN) migrate with full fidelity: watched flags and resume positions.
+- **External shared users** (separate Plex accounts you shared libraries with)
+  migrate **watched flags only**, read from the server's playback history.
+  Plex gives the owner no access to their resume positions, and only history
+  the server still retains can be migrated. PIN-protected Home users cannot be
+  migrated at all.
 - Movies and episodes are matched by their TMDB/IMDb/TVDB ids, so both
   servers must have their libraries matched to metadata.
 
@@ -20,9 +24,10 @@ per user. Re-runnable: by default it only adds progress and never unwatches.
    [plex.tv/link](https://plex.tv/link). The Connection row updates once the
    link completes. Alternatively paste an owner `X-Plex-Token` into the
    manual fallback field.
-4. Match users under **User matching**: the owner and Plex Home users whose
-   name equals a Matinee username are matched automatically; drag a Matinee
-   user from the pool onto any other Plex user (or pick it from the row's
+4. Match users under **User matching**: the owner, Plex Home users and
+   external shared users are listed (shared users are marked "watched flags
+   only"); names that equal a Matinee username are matched automatically. Drag
+   a Matinee user from the pool onto any Plex user (or pick it from the row's
    dropdown) to migrate that pair. Unassigned and PIN-protected users are
    skipped. Save after changing.
 5. Click **Run migration**. The Last run row reports progress and the final

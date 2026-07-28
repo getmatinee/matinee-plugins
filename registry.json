@@ -59,7 +59,7 @@
       ],
       "versions": [
         {
-          "version": "0.9.5",
+          "version": "0.9.6",
           "matinee_min": "2.2.0",
           "source": "plugins/migrate-plex/"
         }
