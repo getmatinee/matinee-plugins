@@ -46,7 +46,7 @@
     {
       "id": "migrate-plex",
       "name": "Plex Watch-State Migration",
-      "description": "Migrate watched flags and resume positions per user from a Plex server into Matinee. Covers the owner and Plex Home users non external shared accounts.",
+      "description": "Migrate watched flags and resume positions per user from a Plex server into Matinee. The owner and Plex Home users migrate fully. External shared accounts migrate watched flags from the server history.",
       "author": "Anna Reber",
       "homepage": "https://github.com/getmatinee/matinee-plugins",
       "capabilities": [
@@ -82,7 +82,7 @@
       ],
       "versions": [
         {
-          "version": "0.9.1",
+          "version": "0.9.2",
           "matinee_min": "2.1.0",
           "source": "plugins/spotify-sync/"
         }
