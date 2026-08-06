@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (C) 2023-2026 Matinee
+# Author: Michael André Reber
+# License: AGPL-3.0-or-later
+# https://github.com/getmatinee/matinee
 """Validate registry.json against the plugin manifests it describes.
 
 registry.json duplicates each plugin's description, capabilities and scopes so
