@@ -20,7 +20,7 @@ dbg('config keys: ' + Object.keys(cfg).join(', '))
 // media.added count and report once per scan
 var added = 0
 
-matinee.on('media.added', function (e) {
+matinee.on('media.added', function () {
   added++
 })
 
