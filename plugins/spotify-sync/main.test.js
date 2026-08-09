@@ -3,9 +3,8 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Node tests for the pure matching half of spotify-sync: normalize() and
-// chooseTrack(). Run from the repository root:
-// node --test "plugins/**/*.test.js"
+// Node tests for the pure matching half of spotify-sync, normalize() and chooseTrack().
+// Run them from the repository root with node --test "plugins/**/*.test.js"
 
 'use strict'
 
@@ -13,7 +12,7 @@ var test = require('node:test')
 var assert = require('node:assert')
 
 // main.js registers its hooks at load time, so the host object has to exist
-// before the require. Only the surface touched at top level is stubbed.
+// before the require. Only the surface touched at top level is stubbed
 global.matinee = {
   manifest: { version: 'test' },
   log: function () {},
@@ -94,28 +93,38 @@ test('an artist-agreeing partial title still matches', function () {
   assert.strictEqual(picked && picked.media_file_id, 'file-partial')
 })
 
-test('without artists on either side the album decides', function () {
+test('a candidate without an artist ghosts even when the album agrees', function () {
   var agreeing = {
     media_file_id: 'file-agree',
     title: 'Shut Your Mouth',
     artist: '',
     album: 'Dancing with the Dead'
   }
+  assert.strictEqual(chooseTrack(painTrack, [agreeing]), null)
+})
+
+test('a track without Spotify artists ghosts even when the album agrees', function () {
+  var noSpotifyArtists = spotifyTrack('Shut Your Mouth', [], 'Dancing with the Dead')
+  var agreeing = {
+    media_file_id: 'file-agree',
+    title: 'Shut Your Mouth',
+    artist: 'Pain',
+    album: 'Dancing with the Dead'
+  }
+  assert.strictEqual(chooseTrack(noSpotifyArtists, [agreeing]), null)
+})
+
+test('album agreement alone never confirms a match', function () {
   var disagreeing = {
     media_file_id: 'file-disagree',
     title: 'Shut Your Mouth',
     artist: '',
     album: 'Club Rotation Vol.45'
   }
-  var picked = chooseTrack(painTrack, [agreeing])
-  assert.strictEqual(picked && picked.media_file_id, 'file-agree')
   assert.strictEqual(chooseTrack(painTrack, [disagreeing]), null)
 
   var noSpotifyArtists = spotifyTrack('Shut Your Mouth', [], 'Dancing with the Dead')
-  picked = chooseTrack(noSpotifyArtists, [bodyroxCandidate])
-  assert.strictEqual(picked, null)
-  picked = chooseTrack(noSpotifyArtists, [agreeing])
-  assert.strictEqual(picked && picked.media_file_id, 'file-agree')
+  assert.strictEqual(chooseTrack(noSpotifyArtists, [bodyroxCandidate]), null)
 })
 
 test('exact titles outrank containment, album agreement breaks ties', function () {

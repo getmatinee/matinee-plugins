@@ -1,7 +1,6 @@
 # Spotify Playlist Sync
 
-Mirrors Spotify playlists into Matinee playlists. Tracks found in your music libraries play normally.
-Tracks you don't have appear greyed-out ("Not available") with artist and album info.
+Mirrors Spotify playlists into Matinee playlists. Tracks found in your music libraries play normally. Tracks you don't have appear greyed-out as "Not available" with artist and album info.
 
 ## Spotify developer app
 
@@ -9,8 +8,7 @@ You need a (free) Spotify developer app:
 
 1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) and create an app (API used: **Web API**).
 2. Add the **Redirect URI** exactly as the plugin shows it in its Connection row: `https://<your-server>/api/plugins/spotify-sync/callback`.
-3. Note: new Spotify apps run in **Development Mode**. Add the Spotify
-   account(s) that will connect under *User Management*, or request extended quota.
+3. New Spotify apps run in **Development Mode**. Add the Spotify accounts that will connect under *User Management*, or request extended quota.
 
 ## Setup in Matinee
 

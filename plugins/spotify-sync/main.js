@@ -4,8 +4,8 @@
 // https://github.com/getmatinee/matinee
 
 // Spotify Playlist Sync
-// The admin connects his Spotify account via OAuth, picks a playlist to sync and the scheduler-driven job mirrors them into Matinee playlists
-// unavailable tracks are recorded as "not available -> ghost tracks". In the web UI they are rendered greyed-out and if possible with artist / album information.
+// The admin connects a Spotify account via OAuth and picks the playlists to sync, then a scheduler-driven job mirrors them into Matinee playlists.
+// Tracks the library does not hold become ghost tracks, greyed-out in the web UI with whatever artist and album information Spotify returned
 
 'use strict'
 
@@ -366,7 +366,7 @@ matinee.http.onCallback(function (req) {
     var me = spotifyGet(API + '/v1/me', { access_token: data.access_token })
     saveJSON('oauth.profile', { id: me.id || '', name: me.display_name || me.id || '' })
   } catch (e) {
-    // The profile lookup is cosmetic; a failure does not matter.
+    // The profile lookup is cosmetic and a failure does not matter
   }
 
   matinee.log('Spotify account connected')
@@ -496,15 +496,10 @@ function containsEitherWay(a, b) {
   return a === b || a.indexOf(b) !== -1 || b.indexOf(a) !== -1
 }
 
-// Decides which local candidate a Spotify track maps to, or null for none.
-// The title must match exactly or by containment after normalize(). The
-// artist is a veto: when the candidate and the Spotify track both name one
-// and no listed Spotify artist containment-matches it, the candidate is out,
-// however good the rest looks. Without artist evidence on both sides the
-// album has to agree instead, or an exact title on a random compilation
-// would pass again. Survivors rank by title exactness, then album
-// agreement, then lowest media_file_id, so ties resolve the same way on
-// every run. Pure on purpose: the repo's node tests load it.
+// Decides which local candidate a Spotify track maps to, or null for none. A match needs a
+// normalized title that is equal or contained plus an artist that agrees, because an exact title
+// alone proves nothing on a compilation-heavy library. Album agreement and then the lowest
+// media_file_id break the remaining ties, so every run resolves the same way
 function chooseTrack(tr, candidates) {
   var cleanTitle = normalize(tr.name)
   if (!cleanTitle || !candidates || candidates.length === 0) return null
@@ -515,6 +510,7 @@ function chooseTrack(tr, candidates) {
     var name = normalize(artists[i] && artists[i].name)
     if (name) spotifyArtists.push(name)
   }
+  if (spotifyArtists.length === 0) return null
   var spotifyAlbum = normalize(tr.album && tr.album.name)
 
   var best = null
@@ -533,28 +529,23 @@ function chooseTrack(tr, candidates) {
     if (titleRank === 0) continue
 
     var candArtist = normalize(c.artist)
-    var artistKnown = !!candArtist && spotifyArtists.length > 0
-    if (artistKnown) {
-      var agrees = false
-      for (var k = 0; k < spotifyArtists.length; k++) {
-        if (containsEitherWay(spotifyArtists[k], candArtist)) {
-          agrees = true
-          break
-        }
+    if (!candArtist) continue
+    var agrees = false
+    for (var k = 0; k < spotifyArtists.length; k++) {
+      if (containsEitherWay(spotifyArtists[k], candArtist)) {
+        agrees = true
+        break
       }
-      if (!agrees) continue
     }
+    if (!agrees) continue
 
     var album = normalize(c.album)
     var albumRank = 0
-    if (!spotifyAlbum) {
-      albumRank = 1
-    } else if (album && album === spotifyAlbum) {
+    if (spotifyAlbum && album && album === spotifyAlbum) {
       albumRank = 2
-    } else if (album && containsEitherWay(album, spotifyAlbum)) {
+    } else if (spotifyAlbum && album && containsEitherWay(album, spotifyAlbum)) {
       albumRank = 1
     }
-    if (!artistKnown && albumRank === 0) continue
 
     var better =
       titleRank > bestTitleRank ||
@@ -570,8 +561,8 @@ function chooseTrack(tr, candidates) {
   return best
 }
 
-// Search the playlist owner's libraries with the cleaned title and first
-// artist, then let chooseTrack pick.
+// Searches the playlist owner's libraries with the cleaned title and first
+// artist, then lets chooseTrack pick
 function matchTrack(tr, ownerUsername) {
   var cleanTitle = normalize(tr.name)
   if (!cleanTitle) return null
@@ -743,8 +734,8 @@ function syncStep(cursor) {
       'playlist "' + cursor.spotifyName + '": ' + used + ' of ' + items.length + ' entries at offset ' + cursor.offset +
       ' of ' + cursor.total + ' (' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available)'
     )
-    // A page shorter than requested is Spotify's end signal; advancing by
-    // the real item count keeps the offsets aligned with it.
+    // A page shorter than requested is Spotify's end signal, so advancing by
+    // the real item count keeps the offsets aligned with it
     cursor.offset += items.length
     if (cursor.offset >= cursor.total || items.length < PAGE_SIZE) {
       var removed = matinee.playlists.reconcileTracks(cursor.matineePlaylistId, SOURCE, cursor.seen || [])
@@ -814,7 +805,7 @@ matinee.schedule(1, function () {
 
 matinee.log('spotify-sync v' + matinee.manifest.version + ' loaded')
 
-// Node sees this during the repo's tests; inside goja there is no module
+// Node sees this during the repo's tests. Inside goja there is no module
 // object and the block never runs.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalize: normalize, chooseTrack: chooseTrack }
