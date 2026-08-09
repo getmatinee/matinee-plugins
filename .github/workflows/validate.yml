@@ -35,3 +35,13 @@ jobs:
       - name: Compile every entrypoint with goja
         working-directory: scripts/gojacheck
         run: go run . ../../plugins/*/main.js
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Run plugin unit tests
+        run: node --test "plugins/**/*.test.js"
