@@ -492,47 +492,100 @@ matinee.http.onRequest('sync-now', function () {
   return { body: JSON.stringify({}) }
 })
 
-// Search local libraries with the cleaned track title and score the candidates on title, album similarity
-function matchTrack(tr) {
+function containsEitherWay(a, b) {
+  return a === b || a.indexOf(b) !== -1 || b.indexOf(a) !== -1
+}
+
+// Decides which local candidate a Spotify track maps to, or null for none.
+// The title must match exactly or by containment after normalize(). The
+// artist is a veto: when the candidate and the Spotify track both name one
+// and no listed Spotify artist containment-matches it, the candidate is out,
+// however good the rest looks. Without artist evidence on both sides the
+// album has to agree instead, or an exact title on a random compilation
+// would pass again. Survivors rank by title exactness, then album
+// agreement, then lowest media_file_id, so ties resolve the same way on
+// every run. Pure on purpose: the repo's node tests load it.
+function chooseTrack(tr, candidates) {
+  var cleanTitle = normalize(tr.name)
+  if (!cleanTitle || !candidates || candidates.length === 0) return null
+
+  var spotifyArtists = []
+  var artists = tr.artists || []
+  for (var i = 0; i < artists.length; i++) {
+    var name = normalize(artists[i] && artists[i].name)
+    if (name) spotifyArtists.push(name)
+  }
+  var spotifyAlbum = normalize(tr.album && tr.album.name)
+
+  var best = null
+  var bestTitleRank = 0
+  var bestAlbumRank = 0
+  for (var j = 0; j < candidates.length; j++) {
+    var c = candidates[j]
+    var title = normalize(c.title)
+
+    var titleRank = 0
+    if (title && title === cleanTitle) {
+      titleRank = 2
+    } else if (title && containsEitherWay(title, cleanTitle)) {
+      titleRank = 1
+    }
+    if (titleRank === 0) continue
+
+    var candArtist = normalize(c.artist)
+    var artistKnown = !!candArtist && spotifyArtists.length > 0
+    if (artistKnown) {
+      var agrees = false
+      for (var k = 0; k < spotifyArtists.length; k++) {
+        if (containsEitherWay(spotifyArtists[k], candArtist)) {
+          agrees = true
+          break
+        }
+      }
+      if (!agrees) continue
+    }
+
+    var album = normalize(c.album)
+    var albumRank = 0
+    if (!spotifyAlbum) {
+      albumRank = 1
+    } else if (album && album === spotifyAlbum) {
+      albumRank = 2
+    } else if (album && containsEitherWay(album, spotifyAlbum)) {
+      albumRank = 1
+    }
+    if (!artistKnown && albumRank === 0) continue
+
+    var better =
+      titleRank > bestTitleRank ||
+      (titleRank === bestTitleRank && albumRank > bestAlbumRank) ||
+      (titleRank === bestTitleRank && albumRank === bestAlbumRank &&
+        best !== null && String(c.media_file_id) < String(best.media_file_id))
+    if (best === null || better) {
+      best = c
+      bestTitleRank = titleRank
+      bestAlbumRank = albumRank
+    }
+  }
+  return best
+}
+
+// Search the playlist owner's libraries with the cleaned title and first
+// artist, then let chooseTrack pick.
+function matchTrack(tr, ownerUsername) {
   var cleanTitle = normalize(tr.name)
   if (!cleanTitle) return null
 
-  var candidates = matinee.music.searchTracks(cleanTitle)
-  if (!candidates || candidates.length === 0) return null
-
-  var spotifyAlbum = normalize(tr.album && tr.album.name)
-  var best = null
-  var bestScore = 0
-  for (var i = 0; i < candidates.length; i++) {
-    var c = candidates[i]
-    var title = normalize(c.title)
-
-    var titleScore = 0
-    if (title && title === cleanTitle) {
-      titleScore = 1
-    } else if (title && (title.indexOf(cleanTitle) !== -1 || cleanTitle.indexOf(title) !== -1)) {
-      titleScore = 0.7
-    }
-
-    var albumScore = 0
-    if (!spotifyAlbum) {
-      albumScore = 0.5
-    } else {
-      var album = normalize(c.album)
-      if (album && album === spotifyAlbum) {
-        albumScore = 1
-      } else if (album && (album.indexOf(spotifyAlbum) !== -1 || spotifyAlbum.indexOf(album) !== -1)) {
-        albumScore = 0.7
-      }
-    }
-
-    var score = titleScore * 0.6 + albumScore * 0.4
-    if (score > bestScore) {
-      bestScore = score
-      best = c
-    }
+  var firstArtist = ''
+  if (tr.artists && tr.artists.length > 0 && tr.artists[0] && tr.artists[0].name) {
+    firstArtist = tr.artists[0].name
   }
-  return bestScore >= 0.6 ? best : null
+  var candidates = matinee.music.searchTracks({
+    title: cleanTitle,
+    artist: firstArtist,
+    username: ownerUsername
+  })
+  return chooseTrack(tr, candidates)
 }
 
 // A sync starts on a manual request, or when auto sync is enabled and the last completed run is older than the interval
@@ -581,6 +634,7 @@ function startSync() {
     total: -1,
     matineePlaylistId: null,
     spotifyName: '',
+    seen: [],
     stats: { matched: 0, ghosts: 0 },
     startedAt: Date.now()
   }
@@ -595,6 +649,7 @@ function advancePlaylist(cursor) {
   cursor.total = -1
   cursor.matineePlaylistId = null
   cursor.spotifyName = ''
+  cursor.seen = []
   cursor.retries = 0
   if (cursor.idx < cursor.playlists.length) {
     saveJSON('sync.cursor', cursor)
@@ -640,6 +695,7 @@ function syncStep(cursor) {
     if (starting) {
       cursor.matineePlaylistId = matinee.playlists.create(String(cfg.owner_username || ''), cursor.spotifyName)
       matinee.playlists.clearGhostTracks(cursor.matineePlaylistId, SOURCE)
+      cursor.seen = []
       saveJSON('sync.cursor', cursor)
       dbg('playlist "' + cursor.spotifyName + '" (' + (cursor.idx + 1) + ' of ' + cursor.playlists.length + '): starting')
     }
@@ -652,9 +708,14 @@ function syncStep(cursor) {
       if (tr.type && tr.type !== 'track') continue
       used++
 
-      var match = matchTrack(tr)
+      var match = matchTrack(tr, String(cfg.owner_username || ''))
       if (match) {
-        matinee.playlists.addTrack(cursor.matineePlaylistId, match.media_file_id)
+        matinee.playlists.addTrack(cursor.matineePlaylistId, match.media_file_id, {
+          source: SOURCE,
+          external_id: tr.id,
+          position: cursor.offset + k
+        })
+        cursor.seen.push(tr.id)
         cursor.stats.matched++
       } else {
         var artistNames = []
@@ -682,8 +743,14 @@ function syncStep(cursor) {
       'playlist "' + cursor.spotifyName + '": ' + used + ' of ' + items.length + ' entries at offset ' + cursor.offset +
       ' of ' + cursor.total + ' (' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available)'
     )
-    cursor.offset += PAGE_SIZE
-    if (cursor.offset >= cursor.total) {
+    // A page shorter than requested is Spotify's end signal; advancing by
+    // the real item count keeps the offsets aligned with it.
+    cursor.offset += items.length
+    if (cursor.offset >= cursor.total || items.length < PAGE_SIZE) {
+      var removed = matinee.playlists.reconcileTracks(cursor.matineePlaylistId, SOURCE, cursor.seen || [])
+      if (removed > 0) {
+        dbg('playlist "' + cursor.spotifyName + '": dropped ' + removed + ' track(s) no longer on Spotify')
+      }
       matinee.log('synced "' + cursor.spotifyName + '" (' + cursor.total + ' tracks)')
       return !advancePlaylist(cursor)
     }
@@ -713,8 +780,10 @@ function syncStep(cursor) {
   }
 }
 
-// Works for most of the tick, reserving room for the slowest step seen so
-// far, so a slow page can never run into the host's 60s call interrupt.
+// Works for most of the tick, reserving room for a slow step so a long page
+// can never run into the host's 60s call interrupt. The reserve jumps to any
+// new worst case but decays toward recent step times afterwards, so one
+// early outlier does not throttle the whole run.
 matinee.schedule(1, function () {
   var cursor = loadJSON('sync.cursor')
   if (!cursor) {
@@ -729,7 +798,7 @@ matinee.schedule(1, function () {
     var t0 = Date.now()
     var ok = syncStep(cursor)
     var took = Date.now() - t0
-    if (took > maxStep) maxStep = took
+    maxStep = took > maxStep ? took : maxStep * 0.7 + took * 0.3
     if (!ok) break
     cursor = loadJSON('sync.cursor')
     if (!cursor) break
@@ -744,3 +813,9 @@ matinee.schedule(1, function () {
 })
 
 matinee.log('spotify-sync v' + matinee.manifest.version + ' loaded')
+
+// Node sees this during the repo's tests; inside goja there is no module
+// object and the block never runs.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { normalize: normalize, chooseTrack: chooseTrack }
+}

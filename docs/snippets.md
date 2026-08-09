@@ -1,8 +1,6 @@
 # Shared helper snippets
 
-Source installs fetch exactly three files, so plugins in this repository stay
-single-file and copy these helpers verbatim instead of importing a shared
-module. Fix a bug here first, then in every plugin that carries the copy
+Source installs fetch exactly three files, so plugins in this repository stay single-file and copy these helpers verbatim instead of importing a shared module. Fix a bug here first, then in every plugin that carries the copy
 (`grep -l 'function loadJSON' plugins/*/main.js`).
 
 ## Debug logging
@@ -58,6 +56,4 @@ function randToken(n) {
 }
 ```
 
-`Math.random()` is not cryptographically strong; for OAuth state nonces on an
-already-authenticated admin flow it is acceptable, but do not use it for
-secrets.
+`Math.random()` is not cryptographically strong; for OAuth state nonces on an already-authenticated admin flow it is acceptable, but do not use it for secrets.
