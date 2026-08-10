@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Copyright (C) 2023-2026 Matinee
+# Author: Michael André Reber
+# License: AGPL-3.0-or-later
+# https://github.com/getmatinee/matinee
+#
+# Packages one plugin into a dist zip and prints its sha256 for a registry download entry
 
 set -euo pipefail
 

@@ -6,6 +6,6 @@
     "build": "esbuild src/main.ts --bundle --format=iife --target=es2017 --outfile=main.js"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.28.1"
   }
 }

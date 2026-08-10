@@ -39,10 +39,6 @@ function saveJSON(key, value) {
   matinee.storage.set(key, JSON.stringify(value))
 }
 
-function jsonBody(obj) {
-  return JSON.stringify(obj)
-}
-
 function qs(obj) {
   var parts = []
   for (var key in obj) {
@@ -53,7 +49,6 @@ function qs(obj) {
   return parts.join('&')
 }
 
-// Creates the client identifier for Plex
 function randToken(n) {
   var alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
   var out = ''
@@ -130,26 +125,25 @@ function checkPin() {
   return null
 }
 
-// Try to request a plex.tv link
 matinee.http.onRequest('connect', function () {
   var res = matinee.http.fetch(PLEXTV + '/api/v2/pins', {
     method: 'POST',
     headers: plexHeaders(null)
   })
   if (res.status >= 400) {
-    return { status: 502, body: jsonBody({ error: 'plex.tv rejected the link request (' + res.status + ').' }) }
+    return { status: 502, body: JSON.stringify({ error: 'plex.tv rejected the link request (' + res.status + ').' }) }
   }
   var data
   try {
     data = JSON.parse(res.body)
   } catch (e) {
-    return { status: 502, body: jsonBody({ error: 'plex.tv returned an invalid response.' }) }
+    return { status: 502, body: JSON.stringify({ error: 'plex.tv returned an invalid response.' }) }
   }
   if (!data || !data.id || !data.code) {
-    return { status: 502, body: jsonBody({ error: 'plex.tv returned no link code.' }) }
+    return { status: 502, body: JSON.stringify({ error: 'plex.tv returned no link code.' }) }
   }
   saveJSON('pin', { id: data.id, code: data.code, createdAt: Date.now() })
-  return { body: jsonBody({ message: 'Enter code ' + data.code + ' at https://plex.tv/link.' }) }
+  return { body: JSON.stringify({ message: 'Enter code ' + data.code + ' at https://plex.tv/link.' }) }
 })
 
 // Matches remote users to Matinee accounts by name
@@ -210,7 +204,9 @@ function resolvePairs(matched, logSkips) {
   return out
 }
 
-// The owner, the Plex Home users and the external shared accounts are fetched. the last can only migrate watched flags only -> read from the server's playback history
+// Fetches the owner, the Plex Home users and the external shared accounts.
+// External accounts can only migrate watched flags, read from the server's
+// playback history.
 function fetchRemoteUsers(token) {
   var out = []
   var seen = {}
@@ -244,18 +240,27 @@ function fetchRemoteUsers(token) {
       out.push({ id: 'acct:' + a.id, accountId: String(a.id), name: aname, external: true })
     }
   } catch (e) {
-    // No server-side accounts endpoint -> owner + home only
+    // Servers without the accounts endpoint migrate the owner and home users only.
   }
   return out
 }
 
-// Try to resolve the per-user PMS token
 function userToken(user, token) {
   if (user.remoteId === 'owner') return token
   var data = plexRequest('POST', PLEXTV + '/api/v2/home/users/' + encodeURIComponent(user.remoteId) + '/switch', token)
   if (!data || !data.authToken) throw new Error('no token for home user ' + user.remoteName)
   dbg('resolved token for home user ' + user.remoteName)
   return String(data.authToken)
+}
+
+// Per-user PMS tokens live in memory only -> After a restart the token is simply resolved again on first use.
+var userTokens = {}
+
+function tokenFor(user) {
+  if (!userTokens[user.remoteId]) {
+    userTokens[user.remoteId] = userToken(user, ownerToken())
+  }
+  return userTokens[user.remoteId]
 }
 
 function guidsOf(item) {
@@ -326,16 +331,16 @@ matinee.http.onRequest('status', function () {
   }
   var pin = loadJSON('pin')
   if (!token && pin && pin.code) {
-    return { body: jsonBody({ text: 'Enter code ' + pin.code + ' at https://plex.tv/link.' }) }
+    return { body: JSON.stringify({ text: 'Enter code ' + pin.code + ' at https://plex.tv/link.' }) }
   }
   if (!token) {
-    return { body: jsonBody({ text: 'Not linked. Use "Connect Plex account" (or paste a token) and save.' }) }
+    return { body: JSON.stringify({ text: 'Not linked. Use "Connect Plex account" (or paste a token) and save.' }) }
   }
   // Linked from here on: the manual token field is redundant, hide it.
   var hide = ['plex_token']
   var cfg = matinee.getConfig()
   if (!cfg.server_url) {
-    return { body: jsonBody({ text: 'Linked. Enter the Plex server URL and save.', hide: hide }) }
+    return { body: JSON.stringify({ text: 'Linked. Enter the Plex server URL and save.', hide: hide }) }
   }
   var text
   if (statusCache && Date.now() - statusCache.at < STATUS_CACHE_MS) {
@@ -351,7 +356,7 @@ matinee.http.onRequest('status', function () {
       for (var i = 0; i < resolved.length; i++) {
         names.push(resolved[i].remoteName + ' -> ' + resolved[i].matineeName)
       }
-      var line = matched.length + ' Plex users (owner + home), ' + resolved.length + ' will be migrated'
+      var line = matched.length + ' Plex users (owner, home and external shared), ' + resolved.length + ' will be migrated'
       line += names.length ? ': ' + names.join(', ') + '.' : '.'
       lines.push(line)
       text = lines.join('\n')
@@ -360,14 +365,14 @@ matinee.http.onRequest('status', function () {
     }
     statusCache = { at: Date.now(), text: text }
   }
-  return { body: jsonBody({ text: text, hide: hide }) }
+  return { body: JSON.stringify({ text: text, hide: hide }) }
 })
 
 // Plex users, Matinee accounts, and the name-based auto matches for the usermatch config field.
 matinee.http.onRequest('users', function () {
   var token = ownerToken() || checkPin()
   if (!token) {
-    return { status: 400, body: jsonBody({ error: 'Link your Plex account first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Link your Plex account first.' }) }
   }
   var matched = matchUsers(fetchRemoteUsers(token))
   var remote = []
@@ -389,22 +394,22 @@ matinee.http.onRequest('users', function () {
   for (var j = 0; j < locals.length; j++) {
     local.push({ value: locals[j].id, label: locals[j].username })
   }
-  return { body: jsonBody({ remote: remote, local: local, suggested: suggested }) }
+  return { body: JSON.stringify({ remote: remote, local: local, suggested: suggested }) }
 })
 
 matinee.http.onRequest('run', function () {
   var cfg = matinee.getConfig()
   if (!cfg.server_url) {
-    return { status: 400, body: jsonBody({ error: 'Enter the Plex server URL first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Enter the Plex server URL first.' }) }
   }
   if (!ownerToken()) {
-    return { status: 400, body: jsonBody({ error: 'Link your Plex account first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Link your Plex account first.' }) }
   }
   if (loadJSON('run.cursor')) {
-    return { body: jsonBody({ message: 'Migration already running.' }) }
+    return { body: JSON.stringify({ message: 'Migration already running.' }) }
   }
   matinee.storage.set('run.request', '1')
-  return { body: jsonBody({}) }
+  return { body: JSON.stringify({}) }
 })
 
 function runProgress(cursor) {
@@ -445,11 +450,12 @@ matinee.http.onRequest('last-run', function () {
   var payload = { text: lines.join('\n'), busy: !!cursor || queued }
   if (cursor) payload.progress = runProgress(cursor)
   else if (queued) payload.progress = 0
-  return { body: jsonBody(payload) }
+  return { body: JSON.stringify(payload) }
 })
 
 function startRun() {
   matinee.storage.delete('run.request')
+  userTokens = {}
   var cfg = matinee.getConfig()
   var token = ownerToken()
   if (!token) {
@@ -504,9 +510,7 @@ function stepSections(cursor) {
     cursor.phase = 'history'
     return
   }
-  var token = userToken(user, ownerToken())
-  user.token = token
-  var data = plexRequest('GET', baseUrl() + '/library/sections', token)
+  var data = plexRequest('GET', baseUrl() + '/library/sections', tokenFor(user))
   var dirs = ((data && data.MediaContainer) || {}).Directory || []
   cursor.sections = []
   for (var i = 0; i < dirs.length; i++) {
@@ -602,7 +606,7 @@ function advancePage(cursor, container) {
 
 function stepMovies(cursor) {
   var user = cursor.users[cursor.userIdx]
-  var container = sectionPage(user.token, cursor.sections[cursor.sectionIdx].key, 1, cursor.offset)
+  var container = sectionPage(tokenFor(user), cursor.sections[cursor.sectionIdx].key, 1, cursor.offset)
   var items = container.Metadata || []
   var states = loadStates(user)
   var universe = cursor.fullSync ? loadJSON('run.universe') || {} : {}
@@ -636,7 +640,7 @@ function stepMovies(cursor) {
 
 function stepShows(cursor) {
   var user = cursor.users[cursor.userIdx]
-  var container = sectionPage(user.token, cursor.sections[cursor.sectionIdx].key, 2, cursor.offset)
+  var container = sectionPage(tokenFor(user), cursor.sections[cursor.sectionIdx].key, 2, cursor.offset)
   var items = container.Metadata || []
   var map = loadJSON('run.seriesmap') || {}
   for (var i = 0; i < items.length; i++) {
@@ -652,7 +656,7 @@ function stepShows(cursor) {
 
 function stepEpisodes(cursor) {
   var user = cursor.users[cursor.userIdx]
-  var container = sectionPage(user.token, cursor.sections[cursor.sectionIdx].key, 4, cursor.offset)
+  var container = sectionPage(tokenFor(user), cursor.sections[cursor.sectionIdx].key, 4, cursor.offset)
   var items = container.Metadata || []
   var map = loadJSON('run.seriesmap') || {}
   var states = loadStates(user)

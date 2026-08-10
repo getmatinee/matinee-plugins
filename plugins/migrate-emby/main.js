@@ -37,10 +37,6 @@ function saveJSON(key, value) {
   matinee.storage.set(key, JSON.stringify(value))
 }
 
-function jsonBody(obj) {
-  return JSON.stringify(obj)
-}
-
 function qs(obj) {
   var parts = []
   for (var key in obj) {
@@ -93,8 +89,8 @@ function matchUsers(remoteUsers) {
   return out
 }
 
-// The run set: the saved user_pairs assignments when present, else the name
-// matches. Pairs whose Matinee user disappeared are skipped.
+// Resolves the run set from the saved user_pairs assignments when present, else from the name matches
+// Pairs whose Matinee user disappeared are skipped.
 function resolvePairs(matched, logSkips) {
   var cfg = matinee.getConfig()
   var pairs = cfg.user_pairs
@@ -164,12 +160,12 @@ function hasProviderIds(ids) {
 
 var stateCache = null
 
-function tickUserStates(userId) {
-  if (!stateCache || stateCache.userId !== userId) {
-    var stored = matinee.watch.getStates(userId)
+function loadStates(user) {
+  if (!stateCache || stateCache.userId !== user.matineeId) {
     var map = {}
+    var stored = matinee.watch.getStates(user.matineeId)
     for (var s = 0; s < stored.length; s++) map[stored[s].media_file_id] = stored[s]
-    stateCache = { userId: userId, map: map }
+    stateCache = { userId: user.matineeId, map: map }
   }
   return stateCache.map
 }
@@ -199,7 +195,7 @@ function rfc3339(raw) {
 matinee.http.onRequest('status', function () {
   var cfg = matinee.getConfig()
   if (!cfg.server_url || !cfg.api_key) {
-    return { body: jsonBody({ text: 'Enter the Emby server URL and API key, then save.' }) }
+    return { body: JSON.stringify({ text: 'Enter the Emby server URL and API key, then save.' }) }
   }
   if (statusCache && Date.now() - statusCache.at < STATUS_CACHE_MS) {
     return { body: statusCache.body }
@@ -218,21 +214,21 @@ matinee.http.onRequest('status', function () {
     line += names.length ? ': ' + names.join(', ') + '.' : '.'
     lines.push(line)
   } catch (e) {
-    var errBody = jsonBody({ text: 'Not connected: ' + (e && e.message ? e.message : String(e)) + ' Check URL and API key.' })
+    var errBody = JSON.stringify({ text: 'Not connected: ' + (e && e.message ? e.message : String(e)) + ' Check URL and API key.' })
     statusCache = { at: Date.now(), body: errBody }
     return { body: errBody }
   }
-  var body = jsonBody({ text: lines.join('\n') })
+  var body = JSON.stringify({ text: lines.join('\n') })
   statusCache = { at: Date.now(), body: body }
   return { body: body }
 })
 
-// Emby users, Matinee accounts, and the name-based auto matches for the
-// usermatch config field.
+// Returns the Emby users, the Matinee accounts, and the name-based auto
+// matches for the usermatch config field.
 matinee.http.onRequest('users', function () {
   var cfg = matinee.getConfig()
   if (!cfg.server_url || !cfg.api_key) {
-    return { status: 400, body: jsonBody({ error: 'Enter the Emby server URL and API key first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Enter the Emby server URL and API key first.' }) }
   }
   var matched = matchUsers(fetchRemoteUsers())
   var remote = []
@@ -247,19 +243,19 @@ matinee.http.onRequest('users', function () {
   for (var j = 0; j < locals.length; j++) {
     local.push({ value: locals[j].id, label: locals[j].username })
   }
-  return { body: jsonBody({ remote: remote, local: local, suggested: suggested }) }
+  return { body: JSON.stringify({ remote: remote, local: local, suggested: suggested }) }
 })
 
 matinee.http.onRequest('run', function () {
   var cfg = matinee.getConfig()
   if (!cfg.server_url || !cfg.api_key) {
-    return { status: 400, body: jsonBody({ error: 'Enter the Emby server URL and API key first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Enter the Emby server URL and API key first.' }) }
   }
   if (loadJSON('run.cursor')) {
-    return { body: jsonBody({ message: 'Migration already running.' }) }
+    return { body: JSON.stringify({ message: 'Migration already running.' }) }
   }
   matinee.storage.set('run.request', '1')
-  return { body: jsonBody({}) }
+  return { body: JSON.stringify({}) }
 })
 
 // Rough completion estimate: finished users plus the current user's phase.
@@ -302,7 +298,7 @@ matinee.http.onRequest('last-run', function () {
   var payload = { text: lines.join('\n'), busy: !!cursor || queued }
   if (cursor) payload.progress = runProgress(cursor)
   else if (queued) payload.progress = 0
-  return { body: jsonBody(payload) }
+  return { body: JSON.stringify(payload) }
 })
 
 function startRun() {
@@ -462,7 +458,7 @@ function stepItems(cursor) {
   var page = embyGet('/Users/' + encodeURIComponent(user.remoteId) + '/Items', params)
   cursor.total = Number(page.TotalRecordCount) || 0
 
-  var states = tickUserStates(user.matineeId)
+  var states = loadStates(user)
   var universe = cursor.fullSync ? loadJSON('run.universe') || {} : {}
   var sourceWatched = cursor.fullSync ? loadJSON('run.watched') || {} : {}
 

@@ -6,10 +6,10 @@
 // Type declarations for the Matinee plugin host API
 
 // One admin-editable setting rendered in Settings -> Plugins -> Configure.
-// Hook-driven fields wire a config row to a named matinee.http.onRequest
-// hook: `button` POSTs its `action` hook, `multiselect` loads choices as
-// [{value, label}] from `options_hook`, and `info` shows read-only text
-// ({text} or a plain string body) from `status_hook`
+// Hook-driven fields wire a config row to a named matinee.http.onRequest hook,
+// where `button` POSTs its `action` hook, `multiselect` loads choices as
+// [{value, label}] from `options_hook` and `info` shows read-only text from
+// `status_hook`
 interface MatineeConfigField {
   key: string
   label: string
@@ -27,10 +27,10 @@ interface MatineeStatusResponse {
   text: string
   busy?: boolean
   progress?: number
-  hide?: string[] // config field keys to hide while the plugin runs
+  hide?: string[]
 }
 
-// What a usermatch field's options_hook returns; the field stores
+// What a usermatch field's options_hook returns. The field stores
 // { [remoteValue]: localValue } under its config key, empty meaning
 // "use the suggested matches".
 interface MatineeUserMatchOptions {
@@ -58,7 +58,7 @@ interface MatineeFetchOptions {
   method?: string
   headers?: Record<string, string>
   body?: string
-  // Skips TLS verification (self-signed LAN server only); SSRF blocks stay.
+  // Skips TLS verification e.g. for a self-signed LAN server
   insecure?: boolean
 }
 
@@ -68,17 +68,19 @@ interface MatineeFetchResult {
   body: string
 }
 
-// Inbound HTTP named hooks (matinee.http.onRequest) are served
-// admin-authenticated at /api/plugins/<id>/hook/<name>; the single OAuth
-// callback (matinee.http.onCallback) is public at /api/plugins/<id>/callback.
+// Named hooks from matinee.http.onRequest are served admin-authenticated at
+// /api/plugins/<id>/hook/<name>. The single matinee.http.onCallback callback
+// is public at /api/plugins/<id>/callback
 interface MatineeHookRequest {
   method: string
   path: string
   query: Record<string, string>
   headers: Record<string, string>
   body: string
-  baseUrl: string // e.g. https://host/api
-  webUrl: string // e.g. https://host
+  // The API origin, such as https://host/api
+  baseUrl: string
+  // The web app origin, such as https://host
+  webUrl: string
 }
 
 interface MatineeHookResponse {
@@ -129,8 +131,9 @@ interface MatineeSearchResult {
 
 interface MatineeDetails {
   id: string | number
-  title?: string // for movies
-  name?: string // for tv series
+  // Movies carry title, tv series carry name
+  title?: string
+  name?: string
   overview?: string
   release_date?: string
   first_air_date?: string
@@ -179,16 +182,16 @@ interface MatineeHost {
   // Dropped unless the server's debug logging toggle is on.
   debug(...args: unknown[]): void
   // Reports a running task to the Activities dropdown. Refresh it with the
-  // same key on every tick (stale entries drop out after 5 minutes);
-  // done removes it and message then shows as an admin success toast.
+  // same key on every tick, because entries not refreshed for 5 minutes drop
+  // out, and done removes it while message shows as an admin success toast
   activity(def: { key: string; title?: string; progress?: number; done?: boolean; message?: string }): void
   http: {
     fetch(url: string, options?: MatineeFetchOptions): MatineeFetchResult
     onRequest(name: string, handler: (req: MatineeHookRequest) => MatineeHookResponse | void): void
     onCallback(handler: (req: MatineeHookRequest) => MatineeHookResponse | void): void
   }
-  // storage requires the "storage" scope; absent (undefined) when the
-  // manifest does not declare it.
+  // Requires the "storage" scope and is undefined when the manifest does not
+  // declare it
   storage: {
     get(key: string): string | null
     set(key: string, value: string): void

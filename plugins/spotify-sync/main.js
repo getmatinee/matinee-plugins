@@ -4,13 +4,14 @@
 // https://github.com/getmatinee/matinee
 
 // Spotify Playlist Sync
-// The admin connects his Spotify account via OAuth, picks a playlist to sync and the scheduler-driven job mirrors them into Matinee playlists
-// unavailable tracks are recorded as "not available -> ghost tracks". In the web UI they are rendered greyed-out and if possible with artist / album information.
+// The admin connects a Spotify account via OAuth and picks the playlists to sync, then a scheduler-driven job mirrors them into Matinee playlists.
+// Tracks the library does not hold become ghost tracks, greyed-out in the web UI with whatever artist and album information Spotify returned
 
 'use strict'
 
 var SOURCE = 'spotify'
 var PAGE_SIZE = 40
+var MAX_PLAYLIST_RETRIES = 3
 var AUTO_SYNC_MS = 48 * 60 * 60 * 1000
 var PENDING_MAX_AGE_MS = 10 * 60 * 1000
 var ACCOUNTS = 'https://accounts.spotify.com'
@@ -188,7 +189,6 @@ function base64UrlNoPad(bytes) {
   return b64Encode(bytes, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', '')
 }
 
-// Standard base64
 function b64(str) {
   return b64Encode(utf8Bytes(str), 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', '=')
 }
@@ -218,10 +218,9 @@ function rateBlocked() {
   return until > Date.now()
 }
 
-// Performs the authenticated GET requests with errorhandling:
-//   {rateLimited:true} on 429 -> after recording the back-off deadline,
-//   {expired:true}     on 401 -> e.g. access token no longer valid,
-//   Error              on any other >= 400 status.
+// Authenticated GET against the Spotify API
+// a 429 records the back-off deadline and throws {rateLimited: true}
+// a 401 throws {expired: true} and any other status >= 400 throws an Error.
 function spotifyGet(url, tokens) {
   var res = matinee.http.fetch(url, {
     method: 'GET',
@@ -237,7 +236,9 @@ function spotifyGet(url, tokens) {
     throw { expired: true }
   }
   if (res.status >= 400) {
-    throw new Error('Spotify API error ' + res.status + ' for ' + url.split('?')[0] + ': ' + String(res.body).slice(0, 200))
+    var err = new Error('Spotify API error ' + res.status + ' for ' + url.split('?')[0] + ': ' + String(res.body).slice(0, 200))
+    err.status = res.status
+    throw err
   }
   return JSON.parse(res.body)
 }
@@ -287,14 +288,10 @@ function redirectUriFor(req) {
   return req.baseUrl + '/plugins/spotify-sync/callback'
 }
 
-function jsonBody(obj) {
-  return JSON.stringify(obj)
-}
-
 matinee.http.onRequest('connect', function (req) {
   var cfg = matinee.getConfig()
   if (!cfg.client_id) {
-    return { status: 400, body: jsonBody({ error: 'Enter your Spotify Client ID and save the configuration first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Enter your Spotify Client ID and save the configuration first.' }) }
   }
 
   var state = randToken(32)
@@ -322,7 +319,7 @@ matinee.http.onRequest('connect', function (req) {
   return { redirect: ACCOUNTS + '/authorize?' + qs(params) }
 })
 
-// Public endpoint validated via the stored state
+// The public callback endpoint
 matinee.http.onCallback(function (req) {
   var fail = { redirect: (req.webUrl || '') + '/settings/plugins?spotify=error' }
 
@@ -369,21 +366,38 @@ matinee.http.onCallback(function (req) {
     var me = spotifyGet(API + '/v1/me', { access_token: data.access_token })
     saveJSON('oauth.profile', { id: me.id || '', name: me.display_name || me.id || '' })
   } catch (e) {
-    // non-fatal
+    // The profile lookup is cosmetic and a failure does not matter
   }
 
   matinee.log('Spotify account connected')
   return { redirect: (req.webUrl || '') + '/settings/plugins?spotify=connected' }
 })
 
+function syncablePlaylist(p, ownerId) {
+  if (!ownerId) return true
+  if (p.collaborative === true) return true
+  return !!(p.owner && String(p.owner.id) === ownerId)
+}
+
 matinee.http.onRequest('playlists', function () {
   if (rateBlocked()) {
-    return { status: 503, body: jsonBody({ error: 'Spotify rate limit reached, try again in a moment.' }) }
+    return { status: 503, body: JSON.stringify({ error: 'Spotify rate limit reached, try again in a moment.' }) }
   }
   var tokens = ensureTokens()
   if (!tokens) {
-    return { status: 400, body: jsonBody({ error: 'Connect your Spotify account first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Connect your Spotify account first.' }) }
   }
+
+  var profile = loadJSON('oauth.profile')
+  if (!profile || !profile.id) {
+    try {
+      var me = spotifyGet(API + '/v1/me', tokens)
+      profile = { id: me.id || '', name: me.display_name || me.id || '' }
+      saveJSON('oauth.profile', profile)
+    } catch (e) {
+    }
+  }
+  var ownerId = profile && profile.id ? String(profile.id) : ''
 
   var options = []
   var url = API + '/v1/me/playlists?limit=50'
@@ -395,7 +409,9 @@ matinee.http.onRequest('playlists', function () {
       for (var i = 0; i < items.length; i++) {
         var p = items[i]
         if (!p || !p.id) continue
-        var total = p.tracks && typeof p.tracks.total === 'number' ? p.tracks.total : 0
+        if (!syncablePlaylist(p, ownerId)) continue
+        var counts = p.items || p.tracks
+        var total = counts && typeof counts.total === 'number' ? counts.total : 0
         options.push({ value: p.id, label: (p.name || p.id) + ' (' + total + ' tracks)' })
       }
       url = page.next || null
@@ -403,14 +419,14 @@ matinee.http.onRequest('playlists', function () {
     }
   } catch (e) {
     if (e && e.rateLimited) {
-      return { status: 503, body: jsonBody({ error: 'Spotify rate limit reached, try again in a moment.' }) }
+      return { status: 503, body: JSON.stringify({ error: 'Spotify rate limit reached, try again in a moment.' }) }
     }
     if (e && e.expired) {
-      return { status: 400, body: jsonBody({ error: 'Spotify session expired, reconnect your account.' }) }
+      return { status: 400, body: JSON.stringify({ error: 'Spotify session expired, reconnect your account.' }) }
     }
     throw e
   }
-  return { body: jsonBody({ options: options }) }
+  return { body: JSON.stringify({ options: options }) }
 })
 
 function formatTime(ms) {
@@ -465,61 +481,105 @@ matinee.http.onRequest('status', function (req) {
   } else if (queued) {
     payload.progress = 0
   }
-  return { body: jsonBody(payload) }
+  return { body: JSON.stringify(payload) }
 })
 
 matinee.http.onRequest('sync-now', function () {
   if (loadJSON('sync.cursor')) {
-    return { body: jsonBody({ message: 'Sync already running.' }) }
+    return { body: JSON.stringify({ message: 'Sync already running.' }) }
   }
   matinee.storage.set('sync.request', '1')
-  return { body: jsonBody({}) }
+  return { body: JSON.stringify({}) }
 })
 
-// Search local libraries with the cleaned track title and score the candidates on title, album similarity
-function matchTrack(tr) {
+function containsEitherWay(a, b) {
+  return a === b || a.indexOf(b) !== -1 || b.indexOf(a) !== -1
+}
+
+// Decides which local candidate a Spotify track maps to, or null for none. A match needs a
+// normalized title that is equal or contained plus an artist that agrees, because an exact title
+// alone proves nothing on a compilation-heavy library. Album agreement and then the lowest
+// media_file_id break the remaining ties, so every run resolves the same way
+function chooseTrack(tr, candidates) {
+  var cleanTitle = normalize(tr.name)
+  if (!cleanTitle || !candidates || candidates.length === 0) return null
+
+  var spotifyArtists = []
+  var artists = tr.artists || []
+  for (var i = 0; i < artists.length; i++) {
+    var name = normalize(artists[i] && artists[i].name)
+    if (name) spotifyArtists.push(name)
+  }
+  if (spotifyArtists.length === 0) return null
+  var spotifyAlbum = normalize(tr.album && tr.album.name)
+
+  var best = null
+  var bestTitleRank = 0
+  var bestAlbumRank = 0
+  for (var j = 0; j < candidates.length; j++) {
+    var c = candidates[j]
+    var title = normalize(c.title)
+
+    var titleRank = 0
+    if (title && title === cleanTitle) {
+      titleRank = 2
+    } else if (title && containsEitherWay(title, cleanTitle)) {
+      titleRank = 1
+    }
+    if (titleRank === 0) continue
+
+    var candArtist = normalize(c.artist)
+    if (!candArtist) continue
+    var agrees = false
+    for (var k = 0; k < spotifyArtists.length; k++) {
+      if (containsEitherWay(spotifyArtists[k], candArtist)) {
+        agrees = true
+        break
+      }
+    }
+    if (!agrees) continue
+
+    var album = normalize(c.album)
+    var albumRank = 0
+    if (spotifyAlbum && album && album === spotifyAlbum) {
+      albumRank = 2
+    } else if (spotifyAlbum && album && containsEitherWay(album, spotifyAlbum)) {
+      albumRank = 1
+    }
+
+    var better =
+      titleRank > bestTitleRank ||
+      (titleRank === bestTitleRank && albumRank > bestAlbumRank) ||
+      (titleRank === bestTitleRank && albumRank === bestAlbumRank &&
+        best !== null && String(c.media_file_id) < String(best.media_file_id))
+    if (best === null || better) {
+      best = c
+      bestTitleRank = titleRank
+      bestAlbumRank = albumRank
+    }
+  }
+  return best
+}
+
+// Searches the playlist owner's libraries with the cleaned title and first
+// artist, then lets chooseTrack pick
+function matchTrack(tr, ownerUsername) {
   var cleanTitle = normalize(tr.name)
   if (!cleanTitle) return null
 
-  var candidates = matinee.music.searchTracks(cleanTitle)
-  if (!candidates || candidates.length === 0) return null
-
-  var spotifyAlbum = normalize(tr.album && tr.album.name)
-  var best = null
-  var bestScore = 0
-  for (var i = 0; i < candidates.length; i++) {
-    var c = candidates[i]
-    var title = normalize(c.title)
-
-    var titleScore = 0
-    if (title && title === cleanTitle) {
-      titleScore = 1
-    } else if (title && (title.indexOf(cleanTitle) !== -1 || cleanTitle.indexOf(title) !== -1)) {
-      titleScore = 0.7
-    }
-
-    var albumScore = 0
-    if (!spotifyAlbum) {
-      albumScore = 0.5
-    } else {
-      var album = normalize(c.album)
-      if (album && album === spotifyAlbum) {
-        albumScore = 1
-      } else if (album && (album.indexOf(spotifyAlbum) !== -1 || spotifyAlbum.indexOf(album) !== -1)) {
-        albumScore = 0.7
-      }
-    }
-
-    var score = titleScore * 0.6 + albumScore * 0.4
-    if (score > bestScore) {
-      bestScore = score
-      best = c
-    }
+  var firstArtist = ''
+  if (tr.artists && tr.artists.length > 0 && tr.artists[0] && tr.artists[0].name) {
+    firstArtist = tr.artists[0].name
   }
-  return bestScore >= 0.6 ? best : null
+  var candidates = matinee.music.searchTracks({
+    title: cleanTitle,
+    artist: firstArtist,
+    username: ownerUsername
+  })
+  return chooseTrack(tr, candidates)
 }
 
-// Sync state scheduler
+// A sync starts on a manual request, or when auto sync is enabled and the last completed run is older than the interval
 function startSync() {
   var cfg = matinee.getConfig()
   var requested = matinee.storage.get('sync.request') === '1'
@@ -565,12 +625,32 @@ function startSync() {
     total: -1,
     matineePlaylistId: null,
     spotifyName: '',
+    seen: [],
     stats: { matched: 0, ghosts: 0 },
     startedAt: Date.now()
   }
   saveJSON('sync.cursor', cursor)
   matinee.log('sync started: ' + playlists.length + ' playlist(s)')
   return cursor
+}
+
+function advancePlaylist(cursor) {
+  cursor.idx++
+  cursor.offset = 0
+  cursor.total = -1
+  cursor.matineePlaylistId = null
+  cursor.spotifyName = ''
+  cursor.seen = []
+  cursor.retries = 0
+  if (cursor.idx < cursor.playlists.length) {
+    saveJSON('sync.cursor', cursor)
+    return false
+  }
+  saveJSON('sync.last', { completedAt: Date.now(), stats: cursor.stats })
+  matinee.storage.delete('sync.cursor')
+  matinee.log('sync complete: ' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available')
+  act({ key: 'sync', done: true, message: 'Spotify sync complete: ' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available' })
+  return true
 }
 
 function syncStep(cursor) {
@@ -587,33 +667,46 @@ function syncStep(cursor) {
   try {
     var spotifyId = cursor.playlists[cursor.idx]
 
-    if (!cursor.matineePlaylistId) {
+    var starting = !cursor.matineePlaylistId
+    if (starting) {
       var meta = spotifyGet(API + '/v1/playlists/' + encodeURIComponent(spotifyId) + '?fields=name', tokens)
       cursor.spotifyName = meta.name || 'Spotify playlist'
-      cursor.matineePlaylistId = matinee.playlists.create(String(cfg.owner_username || ''), cursor.spotifyName)
-      matinee.playlists.clearGhostTracks(cursor.matineePlaylistId, SOURCE)
-      saveJSON('sync.cursor', cursor)
-      dbg('playlist "' + cursor.spotifyName + '" (' + (cursor.idx + 1) + ' of ' + cursor.playlists.length + '): starting')
     }
 
     var page = spotifyGet(
-      API + '/v1/playlists/' + encodeURIComponent(spotifyId) + '/tracks?' + qs({
+      API + '/v1/playlists/' + encodeURIComponent(spotifyId) + '/items?' + qs({
         limit: PAGE_SIZE,
         offset: cursor.offset,
-        fields: 'total,items(track(id,name,artists(name),album(name)))'
+        fields: 'total,items(item(id,name,type,artists(name),album(name)))'
       }),
       tokens
     )
     cursor.total = Number(page.total) || 0
 
-    var items = page.items || []
-    for (var k = 0; k < items.length; k++) {
-      var tr = items[k] && items[k].track
-      if (!tr || !tr.id) continue
+    if (starting) {
+      cursor.matineePlaylistId = matinee.playlists.create(String(cfg.owner_username || ''), cursor.spotifyName)
+      matinee.playlists.clearGhostTracks(cursor.matineePlaylistId, SOURCE)
+      cursor.seen = []
+      saveJSON('sync.cursor', cursor)
+      dbg('playlist "' + cursor.spotifyName + '" (' + (cursor.idx + 1) + ' of ' + cursor.playlists.length + '): starting')
+    }
 
-      var match = matchTrack(tr)
+    var items = page.items || []
+    var used = 0
+    for (var k = 0; k < items.length; k++) {
+      var tr = items[k] && (items[k].item || items[k].track)
+      if (!tr || !tr.id) continue
+      if (tr.type && tr.type !== 'track') continue
+      used++
+
+      var match = matchTrack(tr, String(cfg.owner_username || ''))
       if (match) {
-        matinee.playlists.addTrack(cursor.matineePlaylistId, match.media_file_id)
+        matinee.playlists.addTrack(cursor.matineePlaylistId, match.media_file_id, {
+          source: SOURCE,
+          external_id: tr.id,
+          position: cursor.offset + k
+        })
+        cursor.seen.push(tr.id)
         cursor.stats.matched++
       } else {
         var artistNames = []
@@ -633,45 +726,55 @@ function syncStep(cursor) {
       }
     }
 
+    if (items.length > 0 && used === 0) {
+      matinee.log('warning: Spotify returned ' + items.length + ' unreadable entries for "' + cursor.spotifyName + '", the API response format may have changed')
+    }
+
     dbg(
-      'playlist "' + cursor.spotifyName + '": ' + items.length + ' tracks at offset ' + cursor.offset +
+      'playlist "' + cursor.spotifyName + '": ' + used + ' of ' + items.length + ' entries at offset ' + cursor.offset +
       ' of ' + cursor.total + ' (' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available)'
     )
-    cursor.offset += PAGE_SIZE
-    if (cursor.offset >= cursor.total) {
-      matinee.log('synced "' + cursor.spotifyName + '" (' + cursor.total + ' tracks)')
-      cursor.idx++
-      cursor.offset = 0
-      cursor.total = -1
-      cursor.matineePlaylistId = null
-      cursor.spotifyName = ''
-      if (cursor.idx >= cursor.playlists.length) {
-        saveJSON('sync.last', { completedAt: Date.now(), stats: cursor.stats })
-        matinee.storage.delete('sync.cursor')
-        matinee.log('sync complete: ' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available')
-        act({ key: 'sync', done: true, message: 'Spotify sync complete: ' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available' })
-        return false
+    // A page shorter than requested is Spotify's end signal, so advancing by
+    // the real item count keeps the offsets aligned with it
+    cursor.offset += items.length
+    if (cursor.offset >= cursor.total || items.length < PAGE_SIZE) {
+      var removed = matinee.playlists.reconcileTracks(cursor.matineePlaylistId, SOURCE, cursor.seen || [])
+      if (removed > 0) {
+        dbg('playlist "' + cursor.spotifyName + '": dropped ' + removed + ' track(s) no longer on Spotify')
       }
+      matinee.log('synced "' + cursor.spotifyName + '" (' + cursor.total + ' tracks)')
+      return !advancePlaylist(cursor)
     }
-    if (cursor.retries) cursor.retries = 0
+    cursor.retries = 0
     saveJSON('sync.cursor', cursor)
     return true
   } catch (e) {
-    // rateLimited -> resume later
     if (e && (e.rateLimited || e.expired)) {
       saveJSON('sync.cursor', cursor)
       dbg('sync paused: ' + (e.rateLimited ? 'rate limited' : 'token expired'))
       return false
     }
+
+    var label = '"' + (cursor.spotifyName || cursor.playlists[cursor.idx]) + '"'
+    var reason = e && e.status === 403
+      ? 'Spotify only serves the tracks of playlists you own or collaborate on'
+      : (e && e.message ? e.message : String(e)) + ' at offset ' + cursor.offset
+
     cursor.retries = (cursor.retries || 0) + 1
+    if (cursor.retries >= MAX_PLAYLIST_RETRIES || (e && e.status === 403)) {
+      matinee.log('skipping ' + label + ': ' + reason)
+      return !advancePlaylist(cursor)
+    }
     saveJSON('sync.cursor', cursor)
-    matinee.log('sync error (attempt ' + cursor.retries + ', will retry): ' + (e && e.message ? e.message : String(e)))
+    matinee.log('sync error on ' + label + ' (attempt ' + cursor.retries + ' of ' + MAX_PLAYLIST_RETRIES + ', will retry): ' + reason)
     return false
   }
 }
 
-// Works for most of the tick, reserving room for the slowest step seen so
-// far, so a slow page can never run into the host's 60s call interrupt.
+// Works for most of the tick, reserving room for a slow step so a long page
+// can never run into the host's 60s call interrupt. The reserve jumps to any
+// new worst case but decays toward recent step times afterwards, so one
+// early outlier does not throttle the whole run.
 matinee.schedule(1, function () {
   var cursor = loadJSON('sync.cursor')
   if (!cursor) {
@@ -686,7 +789,7 @@ matinee.schedule(1, function () {
     var t0 = Date.now()
     var ok = syncStep(cursor)
     var took = Date.now() - t0
-    if (took > maxStep) maxStep = took
+    maxStep = took > maxStep ? took : maxStep * 0.7 + took * 0.3
     if (!ok) break
     cursor = loadJSON('sync.cursor')
     if (!cursor) break
@@ -701,3 +804,9 @@ matinee.schedule(1, function () {
 })
 
 matinee.log('spotify-sync v' + matinee.manifest.version + ' loaded')
+
+// Node sees this during the repo's tests. Inside goja there is no module
+// object and the block never runs.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { normalize: normalize, chooseTrack: chooseTrack }
+}

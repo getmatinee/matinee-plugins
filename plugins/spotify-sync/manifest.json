@@ -1,12 +1,12 @@
 {
   "id": "spotify-sync",
   "name": "Spotify Playlist Sync",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Sync your Spotify playlists into Matinee. Tracks are matched against your music libraries, songs you don't have appear as greyed-out 'not available' entries.",
   "author": "Michael André Reber",
   "homepage": "https://github.com/getmatinee/matinee-plugins",
   "main": "main.js",
-  "matinee_min": "2.1.0",
+  "matinee_min": "2.2.1",
   "capabilities": ["playlists", "oauth"],
   "scopes": ["network", "storage", "playlists"],
   "config": [
@@ -15,7 +15,7 @@
     { "key": "owner_username", "label": "Playlist owner (Matinee username)", "type": "text", "required": true, "description": "Synced playlists are created for this Matinee account." },
     { "key": "_status", "label": "Connection", "type": "info", "status_hook": "status" },
     { "key": "_connect", "label": "Connect Spotify account", "type": "button", "action": "connect" },
-    { "key": "playlists", "label": "Playlists to sync", "type": "multiselect", "options_hook": "playlists", "description": "Save after changing the selection." },
+    { "key": "playlists", "label": "Playlists to sync", "type": "multiselect", "options_hook": "playlists", "description": "Only playlists you own or collaborate on are listed. Spotify no longer serves the tracks of anyone elses via API. Save after changing the selection." },
     { "key": "auto_sync", "label": "Re-sync automatically every 48 hours", "type": "boolean" },
     { "key": "_sync", "label": "Sync now", "type": "button", "action": "sync-now" }
   ]
