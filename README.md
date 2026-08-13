@@ -70,3 +70,11 @@ Open a PR against `dev` adding `plugins/<your-id>/` and a `registry.json` entry.
 - Use `matinee.debug()` for page or progress detail, which is only shown while the server's debug logging toggle is on, and `matinee.log()` for phase summaries. The host logs every `matinee.http.fetch` at debug level automatically, so do not log your own HTTP calls.
 
 `scripts/validate.py` enforces the manifest rules and the typography rule, and runs in CI on every PR.
+
+## Support the project
+
+Matinee is free software, funded by sponsorship through [GitHub Sponsors](https://github.com/sponsors/getmatinee) or [Ko-fi](https://ko-fi.com/matinee) and by the 1.- per month subscription of the prebuilt phone apps on the App Store and Play Store. Building the same apps from the sources is free of charge; the subscription pays for the store distribution and supports the project. See the [main repository](https://github.com/getmatinee/matinee#support-the-project) for the full picture.
+
+## License
+
+AGPL-3.0-or-later, for the registry tooling and the official plugins alike.

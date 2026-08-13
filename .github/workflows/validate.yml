@@ -1,4 +1,4 @@
-# Copyright (C) 2023-2026 Matinee
+# Copyright (C) 2023-2026 Swissmakers GmbH
 # Author: Michael André Reber
 # License: AGPL-3.0-or-later
 # https://github.com/getmatinee/matinee
