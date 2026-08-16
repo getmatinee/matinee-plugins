@@ -108,12 +108,12 @@ matinee.http.onCallback(function (req) {
 | `matinee.http.fetch(url, {method, headers, body, insecure})` | `network` | outbound HTTP(S); returns `{status, headers, body}` |
 | `matinee.playlists.*`, `matinee.music.*` | `playlists` | playlist sync surface, see below |
 | `matinee.users.*`, `matinee.media.*`, `matinee.watch.*` | `watch-states` | watch-state migration surface, see below |
-| `matinee.registerMetadataProvider(def)` | - | metadata extension point |
-| `matinee.registerScanner(def)` | - | filename-parser extension point |
+| `matinee.registerMetadataProvider(def)` | `metadata-providers` | metadata extension point |
+| `matinee.registerScanner(def)` | `scanners` | filename-parser extension point |
 
 ### Scopes
 
-Canonical scopes: `storage`, `network`, `playlists`, `watch-states`.
+Canonical scopes: `storage`, `network`, `playlists`, `watch-states`, `metadata-providers`, `scanners`.
 
 Scopes are shown to the admin at install time, and the server enforces them:
 
@@ -121,6 +121,10 @@ Scopes are shown to the admin at install time, and the server enforces them:
 - `playlists`: without it, `matinee.playlists` and `matinee.music` do not exist.
 - `watch-states`: without it, `matinee.users`, `matinee.media` and `matinee.watch` do not exist.
 - `storage`: without it, `matinee.storage` does not exist.
+- `metadata-providers`: without it, `matinee.registerMetadataProvider` does not exist.
+- `scanners`: without it, `matinee.registerScanner` does not exist.
+
+A plugin that registers a scanner replaces how filenames are parsed for every library, so that scope is the widest one an admin can grant. It is deliberately separate from `metadata-providers`, since adding a metadata source is a much smaller request.
 
 ### Activities
 

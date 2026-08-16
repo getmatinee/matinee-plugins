@@ -6,7 +6,7 @@
       "name": "Hello World",
       "description": "Minimal example plugin: logs lifecycle events and demonstrates config, storage and scheduling.",
       "author": "Michael André Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/hello-world",
       "capabilities": [
         "events"
       ],
@@ -26,7 +26,7 @@
       "name": "Emby Watch-State Migration",
       "description": "Migrate watched flags and resume positions per user from an Emby server into Matinee.",
       "author": "Anna Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/migrate-emby",
       "capabilities": [
         "migration"
       ],
@@ -48,7 +48,7 @@
       "name": "Plex Watch-State Migration",
       "description": "Migrate watched flags and resume positions per user from a Plex server into Matinee. The owner and Plex Home users migrate fully. External shared accounts migrate watched flags from the server history.",
       "author": "Anna Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/migrate-plex",
       "capabilities": [
         "migration"
       ],
@@ -70,7 +70,7 @@
       "name": "Spotify Playlist Sync",
       "description": "Sync your Spotify playlists into Matinee. Tracks are matched against your music libraries, songs you don't have appear as greyed-out 'not available' entries.",
       "author": "Michael André Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/spotify-sync",
       "capabilities": [
         "playlists",
         "oauth"

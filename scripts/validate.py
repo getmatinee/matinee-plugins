@@ -5,9 +5,9 @@
 # https://github.com/getmatinee/matinee
 """Validate registry.json against the plugin manifests it describes.
 
-registry.json duplicates each plugin's description, capabilities and scopes so
-the catalog can render before a plugin is installed. Nothing keeps those copies
-in sync with the manifest, so this check does.
+registry.json duplicates each plugin's description, capabilities, scopes and
+homepage so the catalog can render before a plugin is installed. Nothing keeps
+those copies in sync with the manifest, so this check does.
 
 It is run from the repository root: python3 scripts/validate.py
 """
@@ -116,7 +116,7 @@ def check_registry(root):
         if icon and not os.path.isfile(os.path.join(plugin_dir, icon)):
             fail("%s: icon %r is missing from %s" % (pid, icon, source))
 
-        for field in ("name", "author", "description", "capabilities", "scopes"):
+        for field in ("name", "author", "description", "capabilities", "scopes", "homepage"):
             if entry.get(field) != manifest.get(field):
                 fail("%s: %s differs between registry.json and manifest.json" % (pid, field))
         if manifest.get("matinee_min") != latest.get("matinee_min"):
