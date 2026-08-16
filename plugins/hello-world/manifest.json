@@ -4,7 +4,7 @@
   "version": "1.0.2",
   "description": "Minimal example plugin: logs lifecycle events and demonstrates config, storage and scheduling.",
   "author": "Michael André Reber",
-  "homepage": "https://github.com/getmatinee/matinee-plugins",
+  "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/hello-world",
   "main": "main.js",
   "matinee_min": "2.1.0",
   "capabilities": ["events"],
