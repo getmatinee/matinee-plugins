@@ -4,7 +4,7 @@
   "version": "1.0.5",
   "description": "Migrate watched flags and resume positions per user from an Emby server into Matinee.",
   "author": "Anna Reber",
-  "homepage": "https://github.com/getmatinee/matinee-plugins",
+  "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/migrate-emby",
   "main": "main.js",
   "matinee_min": "2.2.0",
   "capabilities": ["migration"],
