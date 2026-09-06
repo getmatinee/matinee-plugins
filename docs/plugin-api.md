@@ -27,7 +27,6 @@ A source install fetches exactly three files: `manifest.json`, the entrypoint, a
   "homepage": "https://github.com/you/my-plugin",
   "main": "main.js",
   "matinee_min": "2.1.0",
-  "capabilities": ["events"],
   "scopes": ["storage", "network"],
   "config": [
     { "key": "api_key", "label": "API Key", "type": "password", "required": true },
@@ -38,7 +37,6 @@ A source install fetches exactly three files: `manifest.json`, the entrypoint, a
 
 - `id`: unique, kebab-case, and must match the registry id. Never change it after publishing, because installs are keyed by it.
 - `matinee_min`: oldest compatible server version. Enforced twice: the catalog only offers compatible versions, and the server refuses to load an installed plugin whose manifest demands a newer server.
-- `capabilities`: catalog badges describing what the plugin does. Canonical values are `events`, `migration`, `playlists`, `oauth`, `metadata_provider` and `scanner`.
 - `scopes`: the permissions the plugin requests. Admins see them at install. See [Scopes](#scopes).
 
 ### Config fields
@@ -110,10 +108,12 @@ matinee.http.onCallback(function (req) {
 | `matinee.users.*`, `matinee.media.*`, `matinee.watch.*` | `watch-states` | watch-state migration surface, see below |
 | `matinee.registerMetadataProvider(def)` | `metadata-providers` | metadata extension point |
 | `matinee.registerScanner(def)` | `scanners` | filename-parser extension point |
+| `matinee.auth.registerProvider(def)` / `.issueTicket(identity)` | `auth` | sign-in provider surface, see below |
+| `matinee.ldap.connect(opts)` / `.escapeFilter(s)` / `.escapeDN(s)` | `ldap` | LDAP connections for sign-in plugins, see below |
 
 ### Scopes
 
-Canonical scopes: `storage`, `network`, `playlists`, `watch-states`, `metadata-providers`, `scanners`.
+Canonical scopes: `storage`, `network`, `playlists`, `watch-states`, `metadata-providers`, `scanners`, `auth`, `ldap`.
 
 Scopes are shown to the admin at install time, and the server enforces them:
 
@@ -123,8 +123,10 @@ Scopes are shown to the admin at install time, and the server enforces them:
 - `storage`: without it, `matinee.storage` does not exist.
 - `metadata-providers`: without it, `matinee.registerMetadataProvider` does not exist.
 - `scanners`: without it, `matinee.registerScanner` does not exist.
+- `auth`: without it, `matinee.auth` does not exist.
+- `ldap`: without it, `matinee.ldap` does not exist.
 
-A plugin that registers a scanner replaces how filenames are parsed for every library, so that scope is the widest one an admin can grant. It is deliberately separate from `metadata-providers`, since adding a metadata source is a much smaller request.
+A plugin that registers a scanner replaces how filenames are parsed for every library, and a plugin with `auth` decides who may sign in, so those two are the widest scopes an admin can grant. They are deliberately separate from `metadata-providers`, since adding a metadata source is a much smaller request.
 
 ### Activities
 
@@ -223,6 +225,63 @@ matinee.registerScanner({
   parseEpisode: function (path) { return { episode: 7, title: 'Optional' } },
 })
 ```
+
+**Sign-in provider** (scope `auth`): lets a directory or an identity provider sign users in. A user the provider vouches for gets a Matinee account on first sign-in, a local account with the same username is linked to the provider identity and loses its local password, and linked accounts cannot change or reset a password in Matinee. While any provider is registered, self-registration and password reset are switched off server-wide. One password provider and one redirect provider may run at a time.
+
+A **password provider** checks the login form's credentials:
+
+```js
+matinee.auth.registerProvider({
+  name: 'Active Directory',
+  authenticate: function (username, password) {
+    // return { id, username, email?, first_name?, last_name?, admin? }
+    // return null   when the directory does not know the username
+    // return false  when the directory refused the password
+    // throw         when the directory could not be asked
+  },
+})
+```
+
+`id` is the stable identifier the account stays linked to, such as an objectGUID or a subject claim, and `username` becomes the Matinee username. `admin` set to a boolean puts the account's administrator flag under the directory's control on every sign-in, with the last administrator never demoted. Left out, the flag stays as Matinee has it. A `null` verdict lets the server fall back to a local account of that name, which is how clients without the login page's local-account switch still reach one, so answer `false` rather than `null` whenever the directory knew the name.
+
+A **redirect provider** signs in through the browser instead. The login page sends the browser to `GET /api/plugins/<id>/callback?start=1`, and the plugin's callbak handles both that start and the provider's return:
+
+```js
+matinee.auth.registerProvider({ name: 'Keycloak', redirect: true })
+matinee.http.onCallback(function (req) {
+  if (req.query.start) return { redirect: authorizationUrl(req) }
+  var identity = exchangeCode(req.query.code, req.query.state)
+  var ticket = matinee.auth.issueTicket(identity)
+  return { redirect: req.webUrl + '/login?sso_ticket=' + ticket }
+})
+```
+
+`issueTicket` takes the same identity shape and returns a one-time ticket the login page trades for a session within two minutes. Send a failure back as `/login?sso_error=<message>` and the page shows it. Validate your own state nonce, because the callback is public.
+
+**LDAP** (scope `ldap`): connections to a directory, which the JavaScript runtime cannot open itself. `connect` binds and returns a connection, or `null` when the directory refused the credentials, and throws when it could not be reached. A DN with an empty password is refused without asking the directory, since that would be an unauthenticated bind.
+
+```js
+var conn = matinee.ldap.connect({
+  url: 'ldaps://dc1.example.com:636',
+  bindDn: 'CN=svc,DC=example,DC=com',   // empty for anonymous bind
+  password: '...',
+  insecure: false,
+  startTls: false,
+})
+if (conn) {
+  var entries = conn.search({
+    baseDn: 'DC=example,DC=com',
+    filter: '(sAMAccountName=' + matinee.ldap.escapeFilter(username) + ')',
+    attributes: ['objectGUID', 'mail', 'memberOf'],
+    scope: 'sub',                       // sub, one or base
+    sizeLimit: 2,                       // at most 500
+  })
+  // entries: [{ dn, attributes: { name: [values] } }]
+  conn.close()
+}
+```
+
+Attribute values that are not valid UTF-8, such as an objectGUID, arrive as lowercase hex. A plugin may hold four connections at a time and has to close them, though an unload closes whatever is left. Connections time out after ten seconds, and the address blocks of `matinee.http.fetch` apply.
 
 ## Lifecycle
 

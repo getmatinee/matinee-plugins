@@ -62,8 +62,8 @@ A version sets exactly one of `source` or `download`. Setting both, or neither, 
 Open a PR against `dev` adding `plugins/<your-id>/` and a `registry.json` entry. Rules:
 
 - `id` is kebab-case and unique, and the manifest `id` must match the registry id. Never rename a published id or move a published `plugins/<id>/` directory, because installs are keyed by id and source installs fetch exact paths.
-- `name`, `author`, `description`, `capabilities`, `scopes` and `matinee_min` must match between `registry.json` and the manifest. The catalog renders them before a plugin is installed, which is why they are duplicated.
-- Declare plugin `scopes`. Admins approve them at install, and the server enforces all four of `network`, `playlists`, `storage` and `watch-states`.
+- `name`, `author`, `description`, `scopes` and `matinee_min` must match between `registry.json` and the manifest. The catalog renders them before a plugin is installed, which is why they are duplicated.
+- Declare plugin `scopes`. The allowed values are `storage`, `network`, `metadata-providers`, `scanners`, `watch-states`, `playlists`, `auth` and `ldap`. Admins approve them at install, and the server enforces every one of them.
 - Set `matinee_min` to the oldest server version you tested against.
 - ASCII only. No em-dashes, curly quotes, ellipses, arrows or bullets, in code, docs or user-facing strings.
 - A plugin logs through `matinee.log()`, which reaches the server log. Do not log once per media item, because `media.added` fires thousands of times during a scan. Count, and report once on `scan.completed`, the way `hello-world` does.

@@ -1,0 +1,32 @@
+{
+  "id": "ldap-sso",
+  "name": "LDAP Single Sign-on",
+  "version": "0.2.5",
+  "description": "Sign users in against an LDAP directory such as Active Directory or FreeIPA. Directory users get a Matinee account on first sign-in, and an existing local account of the same name is linked to its directory identity.",
+  "author": "Michael André Reber",
+  "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/ldap-sso",
+  "main": "main.js",
+  "matinee_min": "2.2.1",
+  "scopes": ["auth", "ldap"],
+  "config": [
+    { "key": "_preset_ad", "label": "Fill in the Active Directory example", "type": "button", "action": "preset-ad", "description": "Fills the fields below with values for a Windows domain. Replace the host, base DN and service account, then save." },
+    { "key": "_preset_ipa", "label": "Fill in the FreeIPA example", "type": "button", "action": "preset-freeipa", "description": "Fills the fields below with values for a FreeIPA or 389 Directory Server domain." },
+    { "key": "display_name", "label": "Name shown on the login page", "type": "text", "description": "Default is the plugin name." },
+    { "key": "url", "label": "Directory URL", "type": "text", "required": true, "description": "ldaps://dc1.example.com:636 for LDAP over TLS, ldap://host:389 for a plain connection. Link-local and cloud metadata addresses are refused." },
+    { "key": "insecure", "label": "Accept self-signed certificates", "type": "boolean", "description": "Skips certificate verification on port 636 and for StartTLS. Only for a directory whose certificate is not signed by a CA this server trusts." },
+    { "key": "start_tls", "label": "Upgrade a plain ldap:// connection with StartTLS", "type": "boolean" },
+    { "key": "bind_dn", "label": "Service account DN", "type": "text", "description": "A read-only account used to look users up. Leave empty to bind as the signing-in user through the user DN template instead." },
+    { "key": "bind_password", "label": "Service account password", "type": "password" },
+    { "key": "user_base_dn", "label": "User base DN", "type": "text", "required": true, "description": "Where the user search starts, for example DC=example,DC=com." },
+    { "key": "user_filter", "label": "User filter", "type": "text", "required": true, "description": "LDAP filter with {username} standing for the escaped login name, for example (&(objectClass=user)(sAMAccountName={username}))." },
+    { "key": "user_dn_template", "label": "User DN template", "type": "text", "description": "Only without a service account. The DN or principal to bind as, with {username} filled in, for example {username}@example.com or uid={username},cn=users,cn=accounts,dc=example,dc=com." },
+    { "key": "id_attr", "label": "Stable id attribute", "type": "text", "description": "The attribute the Matinee account stays linked to across renames. objectGUID on Active Directory, ipaUniqueID on FreeIPA. The DN is used when the attribute is missing." },
+    { "key": "username_attr", "label": "Username attribute", "type": "text", "description": "Default sAMAccountName. FreeIPA uses uid." },
+    { "key": "email_attr", "label": "Email attribute", "type": "text", "description": "Default mail." },
+    { "key": "first_name_attr", "label": "First name attribute", "type": "text", "description": "Default givenName." },
+    { "key": "last_name_attr", "label": "Last name attribute", "type": "text", "description": "Default sn." },
+    { "key": "admin_group_dn", "label": "Administrator group DN", "type": "text", "description": "Members of this group become Matinee administrators and everyone else is demoted on sign-in. Leave empty to manage the admin flag in Matinee." },
+    { "key": "group_attr", "label": "Group membership attribute", "type": "text", "description": "Default memberOf. Compared against the administrator group DN." },
+    { "key": "_test", "label": "Test connection", "type": "button", "action": "test", "description": "Binds with the service account and counts the users the filter matches." }
+  ]
+}
