@@ -1,7 +1,6 @@
 # Shared helper snippets
 
-Source installs fetch exactly three files, so plugins in this repository stay single-file and copy these helpers verbatim instead of importing a shared module. Fix a bug here first, then in every plugin that carries the copy
-(`grep -l 'function loadJSON' plugins/*/main.js`).
+Source installs fetch exactly three files, so plugins in this repository stay single-file and copy these helpers verbatim instead of importing a shared module. Fix a bug here first, then in every plugin that carries the copy (`grep -l 'function loadJSON' plugins/*/main.js`).
 
 ## Debug logging
 

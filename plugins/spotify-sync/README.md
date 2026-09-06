@@ -18,7 +18,7 @@ You need a (free) Spotify developer app:
 4. Tick the playlists you want under **Playlists to sync** and **Save**.
 5. Click **Sync now**.
 
-Synced playlists appear under `/playlists`. Tick *Re-sync automatically every 48 hours* to keep playlists up to date. Spotify rate limits are respected automatically, so a large first sync can simply take a few extra minutes.
+Synced playlists appear under `/playlists`. Tick *Re-sync automatically every 48 hours* to keep playlists up to date. Spotify rate limits are respected automatically, so a large first sync can take a few extra minutes.
 
 ## What Spotify lets you sync
 

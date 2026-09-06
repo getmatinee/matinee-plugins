@@ -21,8 +21,8 @@ interface MatineeConfigField {
   status_hook?: string
 }
 
-// What an info field's status_hook returns; busy shows a spinner and
-// progress (0-100) a bar while the modal polls.
+// What an info field's status_hook returns. While the modal polls, busy
+// shows a spinner and progress, from 0 to 100, fills a bar
 interface MatineeStatusResponse {
   text: string
   busy?: boolean
@@ -32,7 +32,7 @@ interface MatineeStatusResponse {
 
 // What a usermatch field's options_hook returns. The field stores
 // { [remoteValue]: localValue } under its config key, empty meaning
-// "use the suggested matches".
+// "use the suggested matches"
 interface MatineeUserMatchOptions {
   remote: Array<{ value: string; label: string; disabled?: boolean; note?: string }>
   local: Array<{ value: string; label: string }>
@@ -49,7 +49,6 @@ interface MatineeManifest {
   icon?: string
   main?: string
   matinee_min?: string
-  capabilities?: string[]
   scopes?: string[]
   config?: MatineeConfigField[]
 }
@@ -174,12 +173,39 @@ interface MatineeSetStateOptions {
   lastPlayedAt?: string
 }
 
+// Who a sign-in provider says the user is. id is the stable identifier the
+// Matinee account stays linked to, and admin left out keeps the flag as it is
+interface MatineeIdentity {
+  id: string
+  username: string
+  email?: string
+  first_name?: string
+  last_name?: string
+  admin?: boolean
+}
+
+interface MatineeLDAPEntry {
+  dn: string
+  attributes: Record<string, string[]>
+}
+
+interface MatineeLDAPConnection {
+  search(req: {
+    baseDn: string
+    filter: string
+    attributes?: string[]
+    scope?: 'sub' | 'one' | 'base'
+    sizeLimit?: number
+  }): MatineeLDAPEntry[]
+  close(): void
+}
+
 interface MatineeHost {
   manifest: MatineeManifest
   version: number
   getConfig(): Record<string, unknown>
   log(...args: unknown[]): void
-  // Dropped unless the server's debug logging toggle is on.
+  // Dropped unless the server's debug logging toggle is on
   debug(...args: unknown[]): void
   // Reports a running task to the Activities dropdown. Refresh it with the
   // same key on every tick, because entries not refreshed for 5 minutes drop
@@ -236,6 +262,23 @@ interface MatineeHost {
     parseMovie?(path: string): { title: string; year?: number } | null
     parseEpisode?(path: string): { season?: number; episode: number; title?: string } | null
   }): void
+  // Requires the "auth" scope. authenticate answers the identity, null for an
+  // unknown user, false for a refused password, or throws when the directory
+  // could not be asked. A redirect provider issues tickets from its callback
+  auth: {
+    registerProvider(def: {
+      name?: string
+      redirect?: boolean
+      authenticate?(username: string, password: string): MatineeIdentity | null | false
+    }): void
+    issueTicket(identity: MatineeIdentity): string
+  }
+  // Requires the "ldap" scope. connect answers null when the bind was refused
+  ldap: {
+    connect(opts: { url: string; bindDn?: string; password?: string; insecure?: boolean; startTls?: boolean }): MatineeLDAPConnection | null
+    escapeFilter(value: string): string
+    escapeDN(value: string): string
+  }
 }
 
 declare const matinee: MatineeHost

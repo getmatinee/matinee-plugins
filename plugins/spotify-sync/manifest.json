@@ -7,15 +7,14 @@
   "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/spotify-sync",
   "main": "main.js",
   "matinee_min": "2.2.1",
-  "capabilities": ["playlists", "oauth"],
   "scopes": ["network", "storage", "playlists"],
   "config": [
     { "key": "client_id", "label": "Spotify Client ID", "type": "text", "required": true, "description": "Create an app at developer.spotify.com and add the Redirect URI shown in the Connection row below." },
-    { "key": "client_secret", "label": "Spotify Client Secret", "type": "password", "description": "Optional: leave empty to use PKCE (recommended)." },
+    { "key": "client_secret", "label": "Spotify Client Secret", "type": "password", "description": "Leave empty to use PKCE, which is recommended." },
     { "key": "owner_username", "label": "Playlist owner (Matinee username)", "type": "text", "required": true, "description": "Synced playlists are created for this Matinee account." },
     { "key": "_status", "label": "Connection", "type": "info", "status_hook": "status" },
     { "key": "_connect", "label": "Connect Spotify account", "type": "button", "action": "connect" },
-    { "key": "playlists", "label": "Playlists to sync", "type": "multiselect", "options_hook": "playlists", "description": "Only playlists you own or collaborate on are listed. Spotify no longer serves the tracks of anyone elses via API. Save after changing the selection." },
+    { "key": "playlists", "label": "Playlists to sync", "type": "multiselect", "options_hook": "playlists", "description": "Only playlists you own or collaborate on are listed. Spotify no longer serves other people's tracks over its API. Save after changing the selection." },
     { "key": "auto_sync", "label": "Re-sync automatically every 48 hours", "type": "boolean" },
     { "key": "_sync", "label": "Sync now", "type": "button", "action": "sync-now" }
   ]

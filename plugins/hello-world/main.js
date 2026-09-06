@@ -6,9 +6,9 @@
 // Hello World
 // A minimal Matinee example plugin for devs and reference
 
-// Verbose detail goes through matinee.debug: it only shows while the server's
-// debug logging toggle is on. Feature-detect it so the plugin also runs on
-// servers without the binding.
+// Verbose detail goes through matinee.debug, which only shows while the
+// server's debug logging toggle is on. Feature-detect it so the plugin also
+// runs on servers without the binding
 function dbg(msg) {
   if (typeof matinee.debug === 'function') matinee.debug(msg)
 }
@@ -29,7 +29,7 @@ matinee.on('scan.completed', function (e) {
   added = 0
 })
 
-// Schedule demo, runs once an hour -> persists a counter across restarts via plugin storage
+// Schedule demo that runs once an hour and persists a counter across restarts via plugin storage
 matinee.schedule(60, function () {
   var beats = Number(matinee.storage.get('heartbeats') || '0') + 1
   matinee.storage.set('heartbeats', String(beats))

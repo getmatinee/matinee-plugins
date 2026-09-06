@@ -190,8 +190,8 @@ function rfc3339(raw) {
   }
 }
 
-// Cached briefly: the modal polls this every few seconds and the answer
-// costs two Emby round trips.
+// Cached briefly, because the modal polls this every few seconds and the
+// answer costs two Emby round trips
 matinee.http.onRequest('status', function () {
   var cfg = matinee.getConfig()
   if (!cfg.server_url || !cfg.api_key) {
@@ -258,7 +258,7 @@ matinee.http.onRequest('run', function () {
   return { body: JSON.stringify({}) }
 })
 
-// Rough completion estimate: finished users plus the current user's phase.
+// Rough completion estimate made of finished users plus the current user's phase
 function runProgress(cursor) {
   var frac = cursor.total > 0 ? Math.min(cursor.offset / cursor.total, 1) : 0
   var w = 0
@@ -388,7 +388,7 @@ function resolveItem(item, seriesMap) {
   return []
 }
 
-// Applies one source item's watch data to every mapped local file. -> Default mode never regresses local state ->> full sync mirrors the source values.
+// Applies one source item's watch data to every mapped local file. Default mode never regresses local state, while full sync mirrors the source values
 function applyItem(user, item, files, states, universe, sourceWatched, fullSync) {
   var data = item.UserData || {}
   var watched = data.Played === true
