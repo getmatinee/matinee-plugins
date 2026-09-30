@@ -50,64 +50,10 @@ function qs(obj) {
   return parts.join('&')
 }
 
-function randomToken(n) {
-  var alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  var out = ''
-  for (var i = 0; i < n; i++) {
-    out += alphabet.charAt(Math.floor(Math.random() * alphabet.length))
-  }
-  return out
-}
-
-function utf8Decode(bytes) {
-  var out = ''
-  var i = 0
-  while (i < bytes.length) {
-    var b = bytes[i++]
-    var cp
-    if (b < 0x80) {
-      cp = b
-    } else if (b < 0xe0) {
-      cp = ((b & 0x1f) << 6) | (bytes[i++] & 0x3f)
-    } else if (b < 0xf0) {
-      cp = ((b & 0x0f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f)
-    } else {
-      cp = ((b & 0x07) << 18) | ((bytes[i++] & 0x3f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f)
-    }
-    if (cp > 0xffff) {
-      cp -= 0x10000
-      out += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff))
-    } else {
-      out += String.fromCharCode(cp)
-    }
-  }
-  return out
-}
-
-// The runtime has no atob, so the id token's payload segment is decoded by hand
-function base64UrlDecode(input) {
-  var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
-  var clean = String(input).replace(/=+$/, '')
-  var bytes = []
-  var buffer = 0
-  var bits = 0
-  for (var i = 0; i < clean.length; i++) {
-    var value = alphabet.indexOf(clean.charAt(i) === '+' ? '-' : clean.charAt(i) === '/' ? '_' : clean.charAt(i))
-    if (value < 0) throw new Error('invalid base64url input')
-    buffer = (buffer << 6) | value
-    bits += 6
-    if (bits >= 8) {
-      bits -= 8
-      bytes.push((buffer >> bits) & 0xff)
-    }
-  }
-  return utf8Decode(bytes)
-}
-
 function idTokenClaims(idToken) {
   var parts = String(idToken || '').split('.')
   if (parts.length !== 3) throw new Error('the id token is not a JWT')
-  return JSON.parse(base64UrlDecode(parts[1]))
+  return JSON.parse(matinee.crypto.base64Decode(parts[1]))
 }
 
 function fetchJSON(url, opts) {
@@ -166,30 +112,36 @@ function saveStates(states) {
   matinee.storage.set(STATE_INDEX, JSON.stringify(states))
 }
 
-// Remembers the state nonce of a started sign-in. Stale nonces age out, so an
+// Remembers a started sign-in with its PKCE verifier and id token nonce. Stale entries age out, so an
 // abandoned sign-in cannot pile up storage
-function rememberState(state, now) {
+function rememberState(state, verifier, nonce, now) {
   var states = loadStates().filter(function (entry) { return now - entry.at < STATE_TTL_MS })
-  states.push({ s: state, at: now })
+  states.push({ s: state, v: verifier, n: nonce, at: now })
   if (states.length > STATE_MAX) states = states.slice(states.length - STATE_MAX)
   saveStates(states)
 }
 
-// Spends the nonce. A nonce the provider sends back twice, or one older than
-// the lifetime, is refused
+// Spends a started sign-in and answers its verifier and nonce, or null for a state the provider
+// sends back twice or one older than the lifetime
 function consumeState(state, now) {
   var states = loadStates()
-  var found = false
+  var found = null
   var kept = []
   for (var i = 0; i < states.length; i++) {
     if (states[i].s === state && now - states[i].at < STATE_TTL_MS) {
-      found = true
+      found = { verifier: states[i].v, nonce: states[i].n }
     } else if (now - states[i].at < STATE_TTL_MS) {
       kept.push(states[i])
     }
   }
   saveStates(kept)
   return found
+}
+
+// The state travels in a cookie of this browser as well, so a callback link started elsewhere cannot
+// finish a sign-in here
+function stateCookie(state) {
+  return { name: 'state', value: state, maxAge: state ? STATE_TTL_MS / 1000 : -1 }
 }
 
 // Maps the token claims onto the identity Matinee links the account to. The
@@ -217,17 +169,22 @@ function start(req) {
   var cfg = settings()
   if (!cfg.client_id) throw new Error('the client id is not configured')
   var doc = discovery()
-  var state = randomToken(32)
-  rememberState(state, Date.now())
+  var state = matinee.crypto.randomToken(32)
+  var verifier = matinee.crypto.randomToken(48)
+  var nonce = matinee.crypto.randomToken(24)
+  rememberState(state, verifier, nonce, Date.now())
   var url = doc.authorization_endpoint + (doc.authorization_endpoint.indexOf('?') === -1 ? '?' : '&') + qs({
     response_type: 'code',
     client_id: cfg.client_id,
     redirect_uri: redirectUri(req),
     scope: cfg.scopes,
-    state: state
+    state: state,
+    nonce: nonce,
+    code_challenge: matinee.crypto.sha256(verifier, 'base64url'),
+    code_challenge_method: 'S256'
   })
   dbg('sign-in started')
-  return { redirect: url }
+  return { redirect: url, cookies: [stateCookie(state)] }
 }
 
 function finish(req) {
@@ -236,7 +193,10 @@ function finish(req) {
     throw new Error(text(req.query.error_description) || String(req.query.error))
   }
   if (!req.query.code || !req.query.state) throw new Error('the provider sent no code')
-  if (!consumeState(String(req.query.state), Date.now())) throw new Error('the sign-in state is unknown or expired')
+  var state = String(req.query.state)
+  if (!req.cookies || req.cookies.state !== state) throw new Error('the sign-in was started in another browser')
+  var started = consumeState(state, Date.now())
+  if (!started) throw new Error('the sign-in state is unknown or expired')
 
   var doc = discovery()
   var token = fetchJSON(doc.token_endpoint, {
@@ -247,7 +207,8 @@ function finish(req) {
       code: String(req.query.code),
       redirect_uri: redirectUri(req),
       client_id: cfg.client_id,
-      client_secret: cfg.client_secret
+      client_secret: cfg.client_secret,
+      code_verifier: started.verifier
     })
   })
   if (!token.id_token) throw new Error('the token response carries no id token')
@@ -259,6 +220,7 @@ function finish(req) {
   var audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
   if (audience.indexOf(cfg.client_id) === -1) throw new Error('the id token is for another client')
   if (typeof claims.exp === 'number' && claims.exp * 1000 < Date.now()) throw new Error('the id token has expired')
+  if (claims.nonce !== started.nonce) throw new Error('the id token belongs to another sign-in')
 
   if (doc.userinfo_endpoint && token.access_token) {
     try {
@@ -274,7 +236,7 @@ function finish(req) {
   var identity = identityFromClaims(claims, cfg)
   var ticket = matinee.auth.issueTicket(identity)
   matinee.log('signed in ' + identity.username)
-  return { redirect: webBase(req) + '/login?sso_ticket=' + encodeURIComponent(ticket) }
+  return { redirect: webBase(req) + '/login?sso_ticket=' + encodeURIComponent(ticket), cookies: [stateCookie('')] }
 }
 
 matinee.http.onCallback(function (req) {
@@ -283,7 +245,7 @@ matinee.http.onCallback(function (req) {
   } catch (e) {
     var message = e && e.message ? e.message : String(e)
     matinee.log('sign-in failed: ' + message)
-    return { redirect: webBase(req) + '/login?sso_error=' + encodeURIComponent(message) }
+    return { redirect: webBase(req) + '/login?sso_error=' + encodeURIComponent(message), cookies: [stateCookie('')] }
   }
 })
 
@@ -307,8 +269,9 @@ matinee.log('oidc-sso v' + matinee.manifest.version + ' loaded' + (initial.issue
 // object, so the guard keeps the plugin loading unchanged there
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    base64UrlDecode: base64UrlDecode,
     idTokenClaims: idTokenClaims,
+    start: start,
+    finish: finish,
     identityFromClaims: identityFromClaims,
     rememberState: rememberState,
     consumeState: consumeState,

@@ -36,8 +36,8 @@ To stop using the provider, open **Settings -> Users** and click **Detach from d
 
 ## How the sign-in is verified
 
-The code is exchanged for tokens by the server over TLS, with the client secret, straight at the token endpoint. That exchange is what vouches for the id token, so the plugin does not verify its signature. It does check the issuer, the audience and the expiry, and it reads the userinfo endpoint when the provider offers one. The state nonce that protects the callback is single-use and expires after ten minutes.
+The code is exchanged for tokens by the server over TLS, with the client secret, straight at the token endpoint. That exchange is what vouches for the id token, so the plugin does not verify its signature. It does check the issuer, the audience and the expiry, and it reads the userinfo endpoint when the provider offers one. Each sign-in carries a single-use state that expires after ten minutes and is also kept in a cookie of the browser that started it, so a callback link opened in another browser is refused. The code exchange uses PKCE with S256, and the id token must carry the nonce of the sign-in that asked for it.
 
 ## Permissions
 
-The plugin requests the `auth` scope to register itself as a sign-in provider, the `network` scope for the provider's endpoints, and the `storage` scope for the state nonces of sign-ins in progress. It stores no tokens.
+The plugin requests the `auth` scope to register itself as a sign-in provider, the `network` scope for the provider's endpoints, and the `storage` scope for the state, PKCE verifier and nonce of sign-ins in progress. It stores no tokens.

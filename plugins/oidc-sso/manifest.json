@@ -1,7 +1,7 @@
 {
   "id": "oidc-sso",
   "name": "OpenID Connect Single Sign-on",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Sign users in through an OpenID Connect identity provider such as Keycloak, Authentik, Authelia or Entra ID. Users get a Matinee account on first sign-in, and an existing local account of the same username is linked to its identity.",
   "author": "Michael André Reber",
   "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/oidc-sso",
