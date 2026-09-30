@@ -80,8 +80,8 @@ function plexHeaders(token) {
 }
 
 function plexRequest(method, url, token) {
-  // The user's Plex server often has a self-signed cert, while plex.tv does not
-  var insecure = url.indexOf(PLEXTV) !== 0
+  // Only the admin's own server may skip verification, and only when the admin allowed it. plex.tv is always verified
+  var insecure = Boolean(matinee.getConfig().insecure) && url.indexOf(PLEXTV) !== 0
   var res = matinee.http.fetch(url, { method: method, headers: plexHeaders(token), insecure: insecure })
   if (res.status >= 400) {
     throw new Error('Plex API error ' + res.status + ' for ' + url.split('?')[0])
@@ -204,9 +204,7 @@ function resolvePairs(matched, logSkips) {
   return out
 }
 
-// Fetches the owner, the Plex Home users and the external shared accounts.
-// External accounts can only migrate watched flags, read from the server's
-// playback history.
+// External accounts expose only watched flags through the server playback history
 function fetchRemoteUsers(token) {
   var out = []
   var seen = {}
@@ -226,7 +224,6 @@ function fetchRemoteUsers(token) {
       out.push({ id: String(u.uuid), name: hname, protected: u.protected === true })
     }
   } catch (e) {
-    // No Plex Home -> owner only
   }
   try {
     var accounts = plexRequest('GET', baseUrl() + '/accounts', token)
@@ -253,7 +250,7 @@ function userToken(user, token) {
   return String(data.authToken)
 }
 
-// Per-user PMS tokens live in memory only -> After a restart the token is simply resolved again on first use.
+// Per-user PMS tokens are kept only in memory
 var userTokens = {}
 
 function tokenFor(user) {
@@ -368,7 +365,6 @@ matinee.http.onRequest('status', function () {
   return { body: JSON.stringify({ text: text, hide: hide }) }
 })
 
-// Plex users, Matinee accounts, and the name-based auto matches for the usermatch config field.
 matinee.http.onRequest('users', function () {
   var token = ownerToken() || checkPin()
   if (!token) {
@@ -719,7 +715,7 @@ function stepNextSection(cursor) {
   cursor.phase = cursor.fullSync ? 'reconcile' : 'nextuser'
 }
 
-// Resolves Plex ratingKey to its provider ids, cached across the run.
+// Provider IDs are cached across the migration run
 function guidsForRatingKey(ratingKey) {
   if (!ratingKey) return {}
   var map = loadJSON('run.rkmap') || {}

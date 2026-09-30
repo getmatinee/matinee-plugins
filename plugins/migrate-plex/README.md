@@ -14,8 +14,7 @@ servers must have their libraries matched to metadata.
 ## Setup
 
 1. Install and enable the plugin, open **Configure**.
-2. Set the **Plex server URL**, e.g. `http://plex.local:32400` (no trailing
-slash). LAN addresses are fine.
+2. Set the **Plex server URL**, e.g. `http://plex.local:32400` (no trailing slash). LAN addresses are fine. For an HTTPS server with a self-signed certificate, also turn on **Accept self-signed certificates**. Otherwise the certificate is verified, and plex.tv always is.
 3. Click **Connect Plex account**: the plugin shows a code to enter at
    [plex.tv/link](https://plex.tv/link). The Connection row updates once the
 link completes. Alternatively paste an owner `X-Plex-Token` into the manual fallback field.

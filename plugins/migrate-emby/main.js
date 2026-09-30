@@ -3,9 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Emby Watch State Migration
-// The admin points the plugin at an old Emby server with API key, maps Emby users to Matinee accounts, and a
-// scheduler-driven job then copies watched flags and resume positions per user.
+// Copies Emby watched flags and resume positions into mapped Matinee accounts
 
 'use strict'
 
@@ -52,7 +50,6 @@ function baseUrl() {
   return String(cfg.server_url || '').replace(/\/+$/, '')
 }
 
-// Authenticated GET against the Emby server.
 function embyGet(path, params) {
   var cfg = matinee.getConfig()
   var url = baseUrl() + path
@@ -60,7 +57,7 @@ function embyGet(path, params) {
   var res = matinee.http.fetch(url, {
     method: 'GET',
     headers: { 'X-Emby-Token': String(cfg.api_key || '') },
-    insecure: true
+    insecure: Boolean(cfg.insecure)
   })
   if (res.status >= 400) {
     throw new Error('Emby API error ' + res.status + ' for ' + path.split('?')[0])
@@ -89,8 +86,7 @@ function matchUsers(remoteUsers) {
   return out
 }
 
-// Resolves the run set from the saved user_pairs assignments when present, else from the name matches
-// Pairs whose Matinee user disappeared are skipped.
+// Explicit user pairs take precedence over name matches. Deleted Matinee accounts are skipped
 function resolvePairs(matched, logSkips) {
   var cfg = matinee.getConfig()
   var pairs = cfg.user_pairs
@@ -223,8 +219,6 @@ matinee.http.onRequest('status', function () {
   return { body: body }
 })
 
-// Returns the Emby users, the Matinee accounts, and the name-based auto
-// matches for the usermatch config field.
 matinee.http.onRequest('users', function () {
   var cfg = matinee.getConfig()
   if (!cfg.server_url || !cfg.api_key) {
@@ -341,7 +335,7 @@ function startRun() {
   return cursor
 }
 
-// Phase the server-wide series list, keeping each series provider ids for episode matching.
+// Episode matching needs the provider IDs of each parent series
 function stepSeriesMap(cursor) {
   var page = embyGet('/Items', {
     IncludeItemTypes: 'Series',
@@ -494,7 +488,7 @@ function stepItems(cursor) {
   }
 }
 
-// For full sync only -> unwatch local files the source knows about but no longer has as watched.
+// Full sync clears watched state only for files known to the source
 function stepReconcile(cursor) {
   var user = cursor.users[cursor.userIdx]
   var universe = loadJSON('run.universe') || {}
@@ -512,7 +506,6 @@ function stepReconcile(cursor) {
   cursor.phase = 'nextuser'
 }
 
-// Goes to the next user or finishes the run with summary.
 function stepNextUser(cursor) {
   var done = cursor.users[cursor.userIdx]
   matinee.log(
@@ -565,8 +558,7 @@ function step(cursor) {
   }
 }
 
-// Works for most of the tick, reserving room for the slowest step seen so
-// far, so a slow page can never run into the host's 60s call interrupt.
+// Reserve time for another page before the host's 60-second interrupt
 matinee.schedule(1, function () {
   stateCache = null
   var cursor = loadJSON('run.cursor')

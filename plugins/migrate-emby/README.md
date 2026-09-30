@@ -7,8 +7,7 @@ Movies and episodes are matched by their TMDB/IMDb/TVDB ids, so both servers mus
 ## Setup
 
 1. Install and enable the plugin, open **Configure**.
-2. Set the **Emby server URL**, e.g. `http://emby.local:8096` (no trailing
-slash). LAN addresses are fine.
+2. Set the **Emby server URL**, e.g. `http://emby.local:8096` (no trailing slash). LAN addresses are fine. For an HTTPS server with a self-signed certificate, also turn on **Accept self-signed certificates**. Otherwise the certificate is verified.
 3. Create an API key under Emby Dashboard > Advanced > API Keys and paste it
 into **Emby API key**. The Connection row confirms the link.
 4. Match users under **User matching**: Emby users whose name equals a
