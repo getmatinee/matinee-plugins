@@ -73,7 +73,7 @@ Open a PR against `dev` adding `plugins/<your-id>/` and a `registry.json` entry.
 
 ## Support the project
 
-Matinee is free software, funded by sponsorship through [GitHub Sponsors](https://github.com/sponsors/getmatinee) or [Ko-fi](https://ko-fi.com/matinee) and by the 1.- per month subscription of the prebuilt phone apps on the App Store and Play Store. Building the same apps from the sources is free of charge; the subscription pays for the store distribution and supports the project. See the [main repository](https://github.com/getmatinee/matinee#support-the-project) for the full picture.
+Matinee is free software. You can support its maintenance through [GitHub Sponsors](https://github.com/sponsors/getmatinee) or [Ko-fi](https://ko-fi.com/matinee). Building the apps from source is free of charge. A proposed subscription for store-distributed phone apps is not implemented in this release. See [Support the project](https://github.com/getmatinee/matinee#support-the-project).
 
 ## License
 
