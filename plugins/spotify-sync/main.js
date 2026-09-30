@@ -1,11 +1,10 @@
-// Copyright (C) 2023-2026 Matinee
+// Copyright (C) 2023-2026 Swissmakers GmbH
 // Author: Michael André Reber
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Spotify Playlist Sync
-// The admin connects a Spotify account via OAuth and picks the playlists to sync, then a scheduler-driven job mirrors them into Matinee playlists.
-// Tracks the library does not hold become ghost tracks, greyed-out in the web UI with whatever artist and album information Spotify returned
+// Mirrors selected Spotify playlists into Matinee. Unmatched tracks stay in the playlist
+// as unavailable entries and are matched again after each music scan
 
 'use strict'
 
@@ -51,176 +50,13 @@ function qs(obj) {
   return parts.join('&')
 }
 
-function randToken(n) {
-  var alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  var out = ''
-  for (var i = 0; i < n; i++) {
-    out += alphabet.charAt(Math.floor(Math.random() * alphabet.length))
-  }
-  return out
-}
-
-// Convert JS string to array of UTF-8 byte values
-function utf8Bytes(str) {
-  var bytes = []
-  for (var i = 0; i < str.length; i++) {
-    var c = str.charCodeAt(i)
-    if (c < 0x80) {
-      bytes.push(c)
-    } else if (c < 0x800) {
-      bytes.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f))
-    } else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
-      var c2 = str.charCodeAt(i + 1)
-      if (c2 >= 0xdc00 && c2 <= 0xdfff) {
-        i++
-        var cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00)
-        bytes.push(
-          0xf0 | (cp >> 18),
-          0x80 | ((cp >> 12) & 0x3f),
-          0x80 | ((cp >> 6) & 0x3f),
-          0x80 | (cp & 0x3f)
-        )
-      } else {
-        bytes.push(0xef, 0xbf, 0xbd)
-      }
-    } else {
-      bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f))
-    }
-  }
-  return bytes
-}
-
-var SHA256_K = [
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-]
-
-function rotr(x, n) {
-  return ((x >>> n) | (x << (32 - n))) | 0
-}
-
-// Return the 32-byte digest as array of byte values -> used for the PKCE S256 code challenge
-function sha256Bytes(str) {
-  var bytes = utf8Bytes(str)
-  var bitLen = bytes.length * 8
-
-  bytes.push(0x80)
-  while (bytes.length % 64 !== 56) bytes.push(0)
-  var hi = Math.floor(bitLen / 0x100000000)
-  var lo = bitLen >>> 0
-  bytes.push((hi >>> 24) & 0xff, (hi >>> 16) & 0xff, (hi >>> 8) & 0xff, hi & 0xff)
-  bytes.push((lo >>> 24) & 0xff, (lo >>> 16) & 0xff, (lo >>> 8) & 0xff, lo & 0xff)
-
-  var h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a
-  var h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19
-  var w = new Array(64)
-
-  for (var off = 0; off < bytes.length; off += 64) {
-    var t
-    for (t = 0; t < 16; t++) {
-      w[t] =
-        (bytes[off + t * 4] << 24) |
-        (bytes[off + t * 4 + 1] << 16) |
-        (bytes[off + t * 4 + 2] << 8) |
-        bytes[off + t * 4 + 3]
-    }
-    for (t = 16; t < 64; t++) {
-      var s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3)
-      var s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10)
-      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0
-    }
-    var a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7
-    for (t = 0; t < 64; t++) {
-      var S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)
-      var ch = (e & f) ^ (~e & g)
-      var temp1 = (h + S1 + ch + SHA256_K[t] + w[t]) | 0
-      var S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)
-      var maj = (a & b) ^ (a & c) ^ (b & c)
-      var temp2 = (S0 + maj) | 0
-      h = g
-      g = f
-      f = e
-      e = (d + temp1) | 0
-      d = c
-      c = b
-      b = a
-      a = (temp1 + temp2) | 0
-    }
-    h0 = (h0 + a) | 0
-    h1 = (h1 + b) | 0
-    h2 = (h2 + c) | 0
-    h3 = (h3 + d) | 0
-    h4 = (h4 + e) | 0
-    h5 = (h5 + f) | 0
-    h6 = (h6 + g) | 0
-    h7 = (h7 + h) | 0
-  }
-
-  var words = [h0, h1, h2, h3, h4, h5, h6, h7]
-  var out = []
-  for (var i = 0; i < 8; i++) {
-    out.push((words[i] >>> 24) & 0xff, (words[i] >>> 16) & 0xff, (words[i] >>> 8) & 0xff, words[i] & 0xff)
-  }
-  return out
-}
-
-function b64Encode(bytes, chars, pad) {
-  var out = ''
-  for (var i = 0; i < bytes.length; i += 3) {
-    var b0 = bytes[i]
-    var b1 = i + 1 < bytes.length ? bytes[i + 1] : 0
-    var b2 = i + 2 < bytes.length ? bytes[i + 2] : 0
-    out += chars.charAt(b0 >> 2)
-    out += chars.charAt(((b0 & 0x03) << 4) | (b1 >> 4))
-    out += i + 1 < bytes.length ? chars.charAt(((b1 & 0x0f) << 2) | (b2 >> 6)) : pad
-    out += i + 2 < bytes.length ? chars.charAt(b2 & 0x3f) : pad
-  }
-  return out
-}
-
-// RFC 4648 base64url without padding -> PKCE code_challenge
-function base64UrlNoPad(bytes) {
-  return b64Encode(bytes, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', '')
-}
-
-function b64(str) {
-  return b64Encode(utf8Bytes(str), 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', '=')
-}
-
-// Title and album normalization for fuzzy matching
-function normalize(s) {
-  if (!s) return ''
-  s = String(s).toLowerCase()
-  try {
-    s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  } catch (e) {
-  }
-  s = s.replace(/\([^)]*\)/g, ' ')
-  s = s.replace(/\[[^\]]*\]/g, ' ')
-  s = s.replace(
-    /\s*-\s*(remaster(ed)?(\s+\d{4})?|live|mono(\s+version)?|stereo(\s+version)?|single\s+version|radio\s+edit|album\s+version|bonus\s+track|deluxe(\s+edition)?|extended(\s+mix|\s+version)?|acoustic(\s+version)?|demo)\s*$/,
-    ' '
-  )
-  s = s.replace(/[^a-z0-9 ]+/g, ' ')
-  s = s.replace(/\s+/g, ' ')
-  s = s.replace(/^\s+|\s+$/g, '')
-  return s
-}
-
 function rateBlocked() {
   var until = Number(matinee.storage.get('rate.retryAfter') || '0')
   return until > Date.now()
 }
 
-// Authenticated GET against the Spotify API
-// a 429 records the back-off deadline and throws {rateLimited: true}
-// a 401 throws {expired: true} and any other status >= 400 throws an Error.
+// HTTP 429 sets `rateLimited` and records a retry deadline. HTTP 401 sets `expired`.
+// Other HTTP failures throw an Error
 function spotifyGet(url, tokens) {
   var res = matinee.http.fetch(url, {
     method: 'GET',
@@ -248,7 +84,7 @@ function tokenRequest(params) {
   var headers = { 'Content-Type': 'application/x-www-form-urlencoded' }
   params.client_id = String(cfg.client_id || '')
   if (cfg.client_secret) {
-    headers['Authorization'] = 'Basic ' + b64(String(cfg.client_id || '') + ':' + String(cfg.client_secret))
+    headers['Authorization'] = 'Basic ' + matinee.crypto.base64(String(cfg.client_id || '') + ':' + String(cfg.client_secret))
   }
   return matinee.http.fetch(ACCOUNTS + '/api/token', {
     method: 'POST',
@@ -294,8 +130,8 @@ matinee.http.onRequest('connect', function (req) {
     return { status: 400, body: JSON.stringify({ error: 'Enter your Spotify Client ID and save the configuration first.' }) }
   }
 
-  var state = randToken(32)
-  var verifier = randToken(64)
+  var state = matinee.crypto.randomToken(32)
+  var verifier = matinee.crypto.randomToken(48)
   var redirectUri = redirectUriFor(req)
   saveJSON('oauth.pending', {
     state: state,
@@ -314,22 +150,20 @@ matinee.http.onRequest('connect', function (req) {
   }
   if (!cfg.client_secret) {
     params.code_challenge_method = 'S256'
-    params.code_challenge = base64UrlNoPad(sha256Bytes(verifier))
+    params.code_challenge = matinee.crypto.sha256(verifier, 'base64url')
   }
   return { redirect: ACCOUNTS + '/authorize?' + qs(params) }
 })
 
-// The public callback endpoint
 matinee.http.onCallback(function (req) {
   var fail = { redirect: (req.webUrl || '') + '/settings/plugins?spotify=error' }
 
   var pending = loadJSON('oauth.pending')
-  matinee.storage.delete('oauth.pending')
-
   var query = req.query || {}
-  if (!pending || !pending.state || !pending.verifier) return fail
+  // Only the answer to the connect in progress may end it, so a stray hit on the public callback cannot cancel it
+  if (!pending || !pending.state || !pending.verifier || query.state !== pending.state) return fail
+  matinee.storage.delete('oauth.pending')
   if (query.error || !query.code) return fail
-  if (query.state !== pending.state) return fail
   if (Date.now() - Number(pending.createdAt || 0) > PENDING_MAX_AGE_MS) return fail
 
   var cfg = matinee.getConfig()
@@ -492,91 +326,23 @@ matinee.http.onRequest('sync-now', function () {
   return { body: JSON.stringify({}) }
 })
 
-function containsEitherWay(a, b) {
-  return a === b || a.indexOf(b) !== -1 || b.indexOf(a) !== -1
-}
-
-// Decides which local candidate a Spotify track maps to, or null for none. A match needs a
-// normalized title that is equal or contained plus an artist that agrees, because an exact title
-// alone proves nothing on a compilation-heavy library. Album agreement and then the lowest
-// media_file_id break the remaining ties, so every run resolves the same way
-function chooseTrack(tr, candidates) {
-  var cleanTitle = normalize(tr.name)
-  if (!cleanTitle || !candidates || candidates.length === 0) return null
-
-  var spotifyArtists = []
-  var artists = tr.artists || []
-  for (var i = 0; i < artists.length; i++) {
-    var name = normalize(artists[i] && artists[i].name)
-    if (name) spotifyArtists.push(name)
-  }
-  if (spotifyArtists.length === 0) return null
-  var spotifyAlbum = normalize(tr.album && tr.album.name)
-
-  var best = null
-  var bestTitleRank = 0
-  var bestAlbumRank = 0
-  for (var j = 0; j < candidates.length; j++) {
-    var c = candidates[j]
-    var title = normalize(c.title)
-
-    var titleRank = 0
-    if (title && title === cleanTitle) {
-      titleRank = 2
-    } else if (title && containsEitherWay(title, cleanTitle)) {
-      titleRank = 1
-    }
-    if (titleRank === 0) continue
-
-    var candArtist = normalize(c.artist)
-    if (!candArtist) continue
-    var agrees = false
-    for (var k = 0; k < spotifyArtists.length; k++) {
-      if (containsEitherWay(spotifyArtists[k], candArtist)) {
-        agrees = true
-        break
-      }
-    }
-    if (!agrees) continue
-
-    var album = normalize(c.album)
-    var albumRank = 0
-    if (spotifyAlbum && album && album === spotifyAlbum) {
-      albumRank = 2
-    } else if (spotifyAlbum && album && containsEitherWay(album, spotifyAlbum)) {
-      albumRank = 1
-    }
-
-    var better =
-      titleRank > bestTitleRank ||
-      (titleRank === bestTitleRank && albumRank > bestAlbumRank) ||
-      (titleRank === bestTitleRank && albumRank === bestAlbumRank &&
-        best !== null && String(c.media_file_id) < String(best.media_file_id))
-    if (best === null || better) {
-      best = c
-      bestTitleRank = titleRank
-      bestAlbumRank = albumRank
-    }
-  }
-  return best
-}
-
-// Searches the playlist owner's libraries with the cleaned title and first
-// artist, then lets chooseTrack pick
+// The server tries ISRC before title, artist and duration. Unmatched tracks remain
+// unavailable until a music scan can match them
 function matchTrack(tr, ownerUsername) {
-  var cleanTitle = normalize(tr.name)
-  if (!cleanTitle) return null
-
-  var firstArtist = ''
-  if (tr.artists && tr.artists.length > 0 && tr.artists[0] && tr.artists[0].name) {
-    firstArtist = tr.artists[0].name
+  var artists = []
+  var credits = tr.artists || []
+  for (var i = 0; i < credits.length; i++) {
+    if (credits[i] && credits[i].name) artists.push(credits[i].name)
   }
-  var candidates = matinee.music.searchTracks({
-    title: cleanTitle,
-    artist: firstArtist,
+  var isrc = tr.external_ids && tr.external_ids.isrc ? String(tr.external_ids.isrc) : ''
+  return matinee.music.matchTrack({
+    title: tr.name || '',
+    artists: artists,
+    album: (tr.album && tr.album.name) || '',
+    duration_ms: Number(tr.duration_ms) || 0,
+    isrc: isrc,
     username: ownerUsername
   })
-  return chooseTrack(tr, candidates)
 }
 
 // A sync starts on a manual request, or when auto sync is enabled and the last completed run is older than the interval
@@ -677,7 +443,7 @@ function syncStep(cursor) {
       API + '/v1/playlists/' + encodeURIComponent(spotifyId) + '/items?' + qs({
         limit: PAGE_SIZE,
         offset: cursor.offset,
-        fields: 'total,items(item(id,name,type,artists(name),album(name)))'
+        fields: 'total,items(item(id,name,type,duration_ms,external_ids(isrc),artists(name),album(name)))'
       }),
       tokens
     )
@@ -720,7 +486,9 @@ function syncStep(cursor) {
           album: (tr.album && tr.album.name) || '',
           source: SOURCE,
           external_id: tr.id,
-          position: cursor.offset + k
+          position: cursor.offset + k,
+          duration_ms: Number(tr.duration_ms) || 0,
+          isrc: (tr.external_ids && tr.external_ids.isrc) || ''
         })
         cursor.stats.ghosts++
       }
@@ -734,8 +502,7 @@ function syncStep(cursor) {
       'playlist "' + cursor.spotifyName + '": ' + used + ' of ' + items.length + ' entries at offset ' + cursor.offset +
       ' of ' + cursor.total + ' (' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available)'
     )
-    // A page shorter than requested is Spotify's end signal, so advancing by
-    // the real item count keeps the offsets aligned with it
+    // Spotify signals the end with a short page
     cursor.offset += items.length
     if (cursor.offset >= cursor.total || items.length < PAGE_SIZE) {
       var removed = matinee.playlists.reconcileTracks(cursor.matineePlaylistId, SOURCE, cursor.seen || [])
@@ -771,10 +538,8 @@ function syncStep(cursor) {
   }
 }
 
-// Works for most of the tick, reserving room for a slow step so a long page
-// can never run into the host's 60s call interrupt. The reserve jumps to any
-// new worst case but decays toward recent step times afterwards, so one
-// early outlier does not throttle the whole run.
+// Reserve time for the next page before the host's 60-second interrupt.
+// Decay the estimate so one slow page does not throttle the entire sync
 matinee.schedule(1, function () {
   var cursor = loadJSON('sync.cursor')
   if (!cursor) {
@@ -805,8 +570,7 @@ matinee.schedule(1, function () {
 
 matinee.log('spotify-sync v' + matinee.manifest.version + ' loaded')
 
-// Node sees this during the repo's tests. Inside goja there is no module
-// object and the block never runs.
+// Node tests import this function. Goja provides no module object
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { normalize: normalize, chooseTrack: chooseTrack }
+  module.exports = { matchTrack: matchTrack }
 }

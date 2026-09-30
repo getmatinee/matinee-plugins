@@ -1,10 +1,9 @@
-// Copyright (C) 2023-2026 Matinee
+// Copyright (C) 2023-2026 Swissmakers GmbH
 // Author: Michael André Reber
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Package main compiles plugin entrypoints with goja, the JavaScript engine
-// the Matinee server embeds, so CI rejects syntax its runtime cannot parse.
+// Package main checks plugin syntax with the server's Goja runtime
 package main
 
 import (

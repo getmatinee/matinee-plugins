@@ -1,15 +1,12 @@
-// Copyright (C) 2023-2026 Matinee
+// Copyright (C) 2023-2026 Swissmakers GmbH
 // Author: Michael André Reber
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
 // Type declarations for the Matinee plugin host API
 
-// One admin-editable setting rendered in Settings -> Plugins -> Configure.
-// Hook-driven fields wire a config row to a named matinee.http.onRequest hook,
-// where `button` POSTs its `action` hook, `multiselect` loads choices as
-// [{value, label}] from `options_hook` and `info` shows read-only text from
-// `status_hook`
+// Admin fields use named HTTP hooks. Buttons POST to `action`, multiselect loads
+// `{value, label}` choices from `options_hook`, and info reads text from `status_hook`
 interface MatineeConfigField {
   key: string
   label: string
@@ -21,8 +18,8 @@ interface MatineeConfigField {
   status_hook?: string
 }
 
-// What an info field's status_hook returns; busy shows a spinner and
-// progress (0-100) a bar while the modal polls.
+// What an info field's status_hook returns. While the modal polls, busy
+// shows a spinner and progress, from 0 to 100, fills a bar
 interface MatineeStatusResponse {
   text: string
   busy?: boolean
@@ -30,9 +27,8 @@ interface MatineeStatusResponse {
   hide?: string[]
 }
 
-// What a usermatch field's options_hook returns. The field stores
-// { [remoteValue]: localValue } under its config key, empty meaning
-// "use the suggested matches".
+// User matching stores a remote-to-local value map under its config key.
+// An empty map selects the suggested matches
 interface MatineeUserMatchOptions {
   remote: Array<{ value: string; label: string; disabled?: boolean; note?: string }>
   local: Array<{ value: string; label: string }>
@@ -49,7 +45,6 @@ interface MatineeManifest {
   icon?: string
   main?: string
   matinee_min?: string
-  capabilities?: string[]
   scopes?: string[]
   config?: MatineeConfigField[]
 }
@@ -68,9 +63,8 @@ interface MatineeFetchResult {
   body: string
 }
 
-// Named hooks from matinee.http.onRequest are served admin-authenticated at
-// /api/plugins/<id>/hook/<name>. The single matinee.http.onCallback callback
-// is public at /api/plugins/<id>/callback
+// Named hooks require admin authentication at /api/plugins/<id>/hook/<name>.
+// The onCallback handler is public at /api/plugins/<id>/callback
 interface MatineeHookRequest {
   method: string
   path: string
@@ -81,13 +75,24 @@ interface MatineeHookRequest {
   baseUrl: string
   // The web app origin, such as https://host
   webUrl: string
+  // The plugin's own callback cookies by name. No other cookie reaches a plugin
+  cookies: Record<string, string>
+}
+
+// Only a callback answer sets cookies. A negative maxAge deletes one, zero keeps it for the browser session
+interface MatineeHookCookie {
+  name: string
+  value: string
+  maxAge?: number
 }
 
 interface MatineeHookResponse {
   status?: number
   body?: string
   contentType?: string
+  // An http or https address or a path. Any other scheme fails the call
   redirect?: string
+  cookies?: MatineeHookCookie[]
 }
 
 interface MatineePlaylistSummary {
@@ -174,16 +179,42 @@ interface MatineeSetStateOptions {
   lastPlayedAt?: string
 }
 
+// Who a sign-in provider says the user is. id is the stable identifier the
+// Matinee account stays linked to, and admin left out keeps the flag as it is
+interface MatineeIdentity {
+  id: string
+  username: string
+  email?: string
+  first_name?: string
+  last_name?: string
+  admin?: boolean
+}
+
+interface MatineeLDAPEntry {
+  dn: string
+  attributes: Record<string, string[]>
+}
+
+interface MatineeLDAPConnection {
+  search(req: {
+    baseDn: string
+    filter: string
+    attributes?: string[]
+    scope?: 'sub' | 'one' | 'base'
+    sizeLimit?: number
+  }): MatineeLDAPEntry[]
+  close(): void
+}
+
 interface MatineeHost {
   manifest: MatineeManifest
   version: number
   getConfig(): Record<string, unknown>
   log(...args: unknown[]): void
-  // Dropped unless the server's debug logging toggle is on.
+  // Dropped unless the server's debug logging toggle is on
   debug(...args: unknown[]): void
-  // Reports a running task to the Activities dropdown. Refresh it with the
-  // same key on every tick, because entries not refreshed for 5 minutes drop
-  // out, and done removes it while message shows as an admin success toast
+  // Activities expire after five minutes without a refresh under the same key.
+  // done removes the entry and message shows an admin success toast
   activity(def: { key: string; title?: string; progress?: number; done?: boolean; message?: string }): void
   http: {
     fetch(url: string, options?: MatineeFetchOptions): MatineeFetchResult
@@ -196,6 +227,14 @@ interface MatineeHost {
     get(key: string): string | null
     set(key: string, value: string): void
     delete(key: string): void
+  }
+  crypto: {
+    // Unpadded base64url text of that many random bytes, 32 by default
+    randomToken(bytes?: number): string
+    sha256(text: string, encoding?: 'hex' | 'base64url'): string
+    base64(text: string, variant?: 'std' | 'url'): string
+    // Reads either alphabet, with or without padding
+    base64Decode(text: string): string
   }
   on(event: 'media.added' | 'scan.completed' | 'job.completed', handler: (payload: any) => void): void
   schedule(everyMinutes: number, fn: () => void): void
@@ -236,6 +275,22 @@ interface MatineeHost {
     parseMovie?(path: string): { title: string; year?: number } | null
     parseEpisode?(path: string): { season?: number; episode: number; title?: string } | null
   }): void
+  // Requires the auth scope. authenticate returns an identity, null for an unknown user,
+  // false for a refused password, or throws on lookup failure. Redirect providers issue callback tickets
+  auth: {
+    registerProvider(def: {
+      name?: string
+      redirect?: boolean
+      authenticate?(username: string, password: string): MatineeIdentity | null | false
+    }): void
+    issueTicket(identity: MatineeIdentity): string
+  }
+  // Requires the "ldap" scope. connect answers null when the bind was refused
+  ldap: {
+    connect(opts: { url: string; bindDn?: string; password?: string; insecure?: boolean; startTls?: boolean }): MatineeLDAPConnection | null
+    escapeFilter(value: string): string
+    escapeDN(value: string): string
+  }
 }
 
 declare const matinee: MatineeHost

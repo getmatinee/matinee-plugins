@@ -1,0 +1,24 @@
+{
+  "id": "oidc-sso",
+  "name": "OpenID Connect Single Sign-on",
+  "version": "0.3.0",
+  "description": "Sign users in through an OpenID Connect identity provider such as Keycloak, Authentik, Authelia or Entra ID. Users get a Matinee account on first sign-in, and an existing local account of the same username is linked to its identity.",
+  "author": "Michael André Reber",
+  "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/oidc-sso",
+  "main": "main.js",
+  "matinee_min": "2.2.1",
+  "scopes": ["auth", "network", "storage"],
+  "config": [
+    { "key": "display_name", "label": "Name shown on the login button", "type": "text", "description": "The login page shows \"Sign in with\" followed by this name. Default is the plugin name." },
+    { "key": "issuer", "label": "Issuer URL", "type": "text", "required": true, "description": "The provider's issuer, for example https://auth.example.com/realms/home. Its /.well-known/openid-configuration document is read from there." },
+    { "key": "client_id", "label": "Client ID", "type": "text", "required": true },
+    { "key": "client_secret", "label": "Client secret", "type": "password", "required": true, "description": "Register Matinee as a confidential web client with the redirect URI shown by the Check issuer button." },
+    { "key": "scopes", "label": "Scopes", "type": "text", "description": "Default openid profile email. Add groups when the administrator group is set and the provider needs the scope for the claim." },
+    { "key": "username_claim", "label": "Username claim", "type": "text", "description": "Default preferred_username. The claim becomes the Matinee username, so an existing local account of the same name is linked." },
+    { "key": "email_claim", "label": "Email claim", "type": "text", "description": "Default email." },
+    { "key": "groups_claim", "label": "Groups claim", "type": "text", "description": "Default groups. A list claim that carries the user's group names." },
+    { "key": "admin_group", "label": "Administrator group", "type": "text", "description": "Members of this group become Matinee administrators and everyone else is demoted on sign-in. Leave empty to manage the admin flag in Matinee." },
+    { "key": "insecure", "label": "Accept self-signed certificates", "type": "boolean", "description": "Skips certificate verification for the provider. Only for a provider whose certificate is not signed by a CA this server trusts." },
+    { "key": "_check", "label": "Check issuer", "type": "button", "action": "check", "description": "Reads the discovery document and shows the redirect URI to register at the provider." }
+  ]
+}

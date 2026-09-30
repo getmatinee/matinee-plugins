@@ -4,12 +4,9 @@
     {
       "id": "hello-world",
       "name": "Hello World",
-      "description": "Minimal example plugin: logs lifecycle events and demonstrates config, storage and scheduling.",
+      "description": "Minimal example plugin that logs lifecycle events and demonstrates config, storage and scheduling.",
       "author": "Michael André Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
-      "capabilities": [
-        "events"
-      ],
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/hello-world",
       "scopes": [
         "storage"
       ],
@@ -26,10 +23,7 @@
       "name": "Emby Watch-State Migration",
       "description": "Migrate watched flags and resume positions per user from an Emby server into Matinee.",
       "author": "Anna Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
-      "capabilities": [
-        "migration"
-      ],
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/migrate-emby",
       "scopes": [
         "network",
         "storage",
@@ -37,7 +31,7 @@
       ],
       "versions": [
         {
-          "version": "1.0.5",
+          "version": "1.1.0",
           "matinee_min": "2.2.0",
           "source": "plugins/migrate-emby/"
         }
@@ -48,10 +42,7 @@
       "name": "Plex Watch-State Migration",
       "description": "Migrate watched flags and resume positions per user from a Plex server into Matinee. The owner and Plex Home users migrate fully. External shared accounts migrate watched flags from the server history.",
       "author": "Anna Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
-      "capabilities": [
-        "migration"
-      ],
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/migrate-plex",
       "scopes": [
         "network",
         "storage",
@@ -59,7 +50,7 @@
       ],
       "versions": [
         {
-          "version": "0.9.6",
+          "version": "0.10.0",
           "matinee_min": "2.2.0",
           "source": "plugins/migrate-plex/"
         }
@@ -70,11 +61,7 @@
       "name": "Spotify Playlist Sync",
       "description": "Sync your Spotify playlists into Matinee. Tracks are matched against your music libraries, songs you don't have appear as greyed-out 'not available' entries.",
       "author": "Michael André Reber",
-      "homepage": "https://github.com/getmatinee/matinee-plugins",
-      "capabilities": [
-        "playlists",
-        "oauth"
-      ],
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/spotify-sync",
       "scopes": [
         "network",
         "storage",
@@ -82,9 +69,46 @@
       ],
       "versions": [
         {
-          "version": "0.10.0",
+          "version": "0.11.0",
           "matinee_min": "2.2.1",
           "source": "plugins/spotify-sync/"
+        }
+      ]
+    },
+    {
+      "id": "ldap-sso",
+      "name": "LDAP Single Sign-on",
+      "description": "Sign users in against an LDAP directory such as Active Directory or FreeIPA. Directory users get a Matinee account on first sign-in, and an existing local account of the same name is linked to its directory identity.",
+      "author": "Michael André Reber",
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/ldap-sso",
+      "scopes": [
+        "auth",
+        "ldap"
+      ],
+      "versions": [
+        {
+          "version": "0.2.5",
+          "matinee_min": "2.2.1",
+          "source": "plugins/ldap-sso/"
+        }
+      ]
+    },
+    {
+      "id": "oidc-sso",
+      "name": "OpenID Connect Single Sign-on",
+      "description": "Sign users in through an OpenID Connect identity provider such as Keycloak, Authentik, Authelia or Entra ID. Users get a Matinee account on first sign-in, and an existing local account of the same username is linked to its identity.",
+      "author": "Michael André Reber",
+      "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/oidc-sso",
+      "scopes": [
+        "auth",
+        "network",
+        "storage"
+      ],
+      "versions": [
+        {
+          "version": "0.3.0",
+          "matinee_min": "2.2.1",
+          "source": "plugins/oidc-sso/"
         }
       ]
     }

@@ -12,7 +12,6 @@ A registry is any HTTPS URL serving a `registry.json`. A plain GitHub repository
     "author": "you",
     "homepage": "https://github.com/you/my-plugin",
     "icon": "https://../icon.png",
-    "capabilities": ["events"],
     "scopes": ["storage", "network"],
     "versions": [{
       "version": "1.0.0",
@@ -23,7 +22,7 @@ A registry is any HTTPS URL serving a `registry.json`. A plain GitHub repository
 }
 ```
 
-`description`, `capabilities` and `scopes` are duplicated from the manifest so the catalog can render them before anything is installed. `validate.py` keeps the copies identical.
+`description` and `scopes` are duplicated from the manifest so the catalog can render them before anything is installed. `validate.py` keeps the copies identical.
 
 A version sets exactly one of `source` or `download`. Setting both, or neither, is rejected when the registry is fetched.
 

@@ -1,6 +1,6 @@
 # Spotify Playlist Sync
 
-Mirrors Spotify playlists into Matinee playlists. Tracks found in your music libraries play normally. Tracks you don't have appear greyed-out as "Not available" with artist and album info.
+Mirrors Spotify playlists into Matinee playlists. Tracks found in your music libraries play normally. Tracks you don't have appear greyed-out as "Not available" with artist and album info, and Matinee matches them again after every music scan, so a track you add later takes its place in the playlist on its own. A track is only taken as found when its ISRC, or its title, version, artist and duration, agree with a local file.
 
 ## Spotify developer app
 
@@ -18,7 +18,7 @@ You need a (free) Spotify developer app:
 4. Tick the playlists you want under **Playlists to sync** and **Save**.
 5. Click **Sync now**.
 
-Synced playlists appear under `/playlists`. Tick *Re-sync automatically every 48 hours* to keep playlists up to date. Spotify rate limits are respected automatically, so a large first sync can simply take a few extra minutes.
+Synced playlists appear under `/playlists`. Tick *Re-sync automatically every 48 hours* to keep playlists up to date. Spotify rate limits are respected automatically, so a large first sync can take a few extra minutes.
 
 ## What Spotify lets you sync
 

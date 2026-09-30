@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-# Copyright (C) 2023-2026 Matinee
+# Copyright (C) 2023-2026 Swissmakers GmbH
 # Author: Michael André Reber
 # License: AGPL-3.0-or-later
 # https://github.com/getmatinee/matinee
 """Validate registry.json against the plugin manifests it describes.
 
-registry.json duplicates each plugin's description, capabilities and scopes so
-the catalog can render before a plugin is installed. Nothing keeps those copies
-in sync with the manifest, so this check does.
+registry.json duplicates each plugin's description, scopes and homepage so the
+catalog can render before a plugin is installed. Nothing keeps those copies in
+sync with the manifest, so this check does. It also holds every manifest to
+the scopes the server enforces, the checksum a zip download needs, and the
+rule that a plugin lives in the directory named after its id.
 
 It is run from the repository root: python3 scripts/validate.py
 """
@@ -17,7 +19,7 @@ import os
 import sys
 
 # The typographic characters banned across the project. Letters carrying
-# diacritics (an accented e, say) are fine these below are not
+# diacritics are fine. The characters below are not
 BANNED = {
     "–": "en-dash (use -)",
     "—": "em-dash (use a comma or colon)",
@@ -37,6 +39,9 @@ SKIP_DIRS = {".git", "node_modules", "dist"}
 SKIP_FILES = {os.path.join("scripts", "validate.py"), "LICENSE"}
 
 CONFIG_TYPES = {"text", "password", "number", "boolean", "button", "multiselect", "info", "usermatch"}
+
+# The scopes the server checks through Manifest.HasScope. Anything else is a typo the admin would approve for nothing
+SCOPES = {"storage", "network", "metadata-providers", "scanners", "watch-states", "playlists", "auth", "ldap"}
 
 errors = []
 
@@ -84,6 +89,8 @@ def check_registry(root):
             has_download = bool(version.get("download"))
             if has_source == has_download:
                 fail("%s %s: set exactly one of source or download" % (pid, version.get("version")))
+            if has_download and not version.get("sha256"):
+                fail("%s %s: download needs a sha256" % (pid, version.get("version")))
 
         latest = max(entry["versions"], key=lambda v: version_key(v["version"]))
         source = latest.get("source")
@@ -94,6 +101,8 @@ def check_registry(root):
         if not os.path.isdir(plugin_dir):
             fail("%s: source %r is not a directory" % (pid, source))
             continue
+        if os.path.basename(os.path.normpath(source)) != pid:
+            fail("%s: source %r must be the directory named after the id" % (pid, source))
 
         manifest_path = os.path.join(plugin_dir, "manifest.json")
         if not os.path.isfile(manifest_path):
@@ -116,14 +125,20 @@ def check_registry(root):
         if icon and not os.path.isfile(os.path.join(plugin_dir, icon)):
             fail("%s: icon %r is missing from %s" % (pid, icon, source))
 
-        for field in ("name", "author", "description", "capabilities", "scopes"):
+        for field in ("name", "author", "description", "scopes", "homepage"):
             if entry.get(field) != manifest.get(field):
                 fail("%s: %s differs between registry.json and manifest.json" % (pid, field))
         if manifest.get("matinee_min") != latest.get("matinee_min"):
             fail("%s: matinee_min %r does not match the newest registry version's %r"
                  % (pid, manifest.get("matinee_min"), latest.get("matinee_min")))
 
+        check_scopes(pid, manifest.get("scopes") or [])
         check_config_fields(pid, manifest.get("config") or [])
+
+def check_scopes(pid, scopes):
+    for scope in scopes:
+        if scope not in SCOPES:
+            fail("%s: unknown scope %r (one of %s)" % (pid, scope, ", ".join(sorted(SCOPES))))
 
 def check_config_fields(pid, fields):
     for field in fields:

@@ -1,4 +1,4 @@
-# Copyright (C) 2023-2026 Matinee
+# Copyright (C) 2023-2026 Swissmakers GmbH
 # Author: Michael André Reber
 # License: AGPL-3.0-or-later
 # https://github.com/getmatinee/matinee
@@ -18,7 +18,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -28,10 +28,10 @@ jobs:
   parse:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
         with:
-          go-version: "1.26.5"
+          go-version: "1.27.1"
       - name: Compile every entrypoint with goja
         working-directory: scripts/gojacheck
         run: go run . ../../plugins/*/main.js
@@ -39,9 +39,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
-          node-version: "24"
+          node-version: "24.21.0"
       - name: Run plugin unit tests
         run: node --test "plugins/**/*.test.js"

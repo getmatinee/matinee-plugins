@@ -1,11 +1,11 @@
-// Copyright (C) 2023-2026 Matinee
+// Copyright (C) 2023-2026 Swissmakers GmbH
 // Author: Anna Reber
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
 // Plex Watch State Migration
-// The admin links a Plex account via the plex.tv/link PIN flow (or uses a token), maps Plex users to Matinee accounts, and a scheduler-driven job copies watched flags and resume positions per user.
-// External shared users migrate watched flags only, from the server history.
+// The admin links a Plex account via the plex.tv/link PIN flow or pastes a token, maps Plex users to Matinee accounts, and a scheduler-driven job copies watched flags and resume positions per user.
+// External shared users migrate watched flags only, from the server history
 
 'use strict'
 
@@ -80,8 +80,8 @@ function plexHeaders(token) {
 }
 
 function plexRequest(method, url, token) {
-  // The user's Plex server often has a self-signed cert; plex.tv does not.
-  var insecure = url.indexOf(PLEXTV) !== 0
+  // Only the admin's own server may skip verification, and only when the admin allowed it. plex.tv is always verified
+  var insecure = Boolean(matinee.getConfig().insecure) && url.indexOf(PLEXTV) !== 0
   var res = matinee.http.fetch(url, { method: method, headers: plexHeaders(token), insecure: insecure })
   if (res.status >= 400) {
     throw new Error('Plex API error ' + res.status + ' for ' + url.split('?')[0])
@@ -204,9 +204,7 @@ function resolvePairs(matched, logSkips) {
   return out
 }
 
-// Fetches the owner, the Plex Home users and the external shared accounts.
-// External accounts can only migrate watched flags, read from the server's
-// playback history.
+// External accounts expose only watched flags through the server playback history
 function fetchRemoteUsers(token) {
   var out = []
   var seen = {}
@@ -226,7 +224,6 @@ function fetchRemoteUsers(token) {
       out.push({ id: String(u.uuid), name: hname, protected: u.protected === true })
     }
   } catch (e) {
-    // No Plex Home -> owner only
   }
   try {
     var accounts = plexRequest('GET', baseUrl() + '/accounts', token)
@@ -240,7 +237,7 @@ function fetchRemoteUsers(token) {
       out.push({ id: 'acct:' + a.id, accountId: String(a.id), name: aname, external: true })
     }
   } catch (e) {
-    // Servers without the accounts endpoint migrate the owner and home users only.
+    // Servers without the accounts endpoint migrate the owner and home users only
   }
   return out
 }
@@ -253,7 +250,7 @@ function userToken(user, token) {
   return String(data.authToken)
 }
 
-// Per-user PMS tokens live in memory only -> After a restart the token is simply resolved again on first use.
+// Per-user PMS tokens are kept only in memory
 var userTokens = {}
 
 function tokenFor(user) {
@@ -336,7 +333,7 @@ matinee.http.onRequest('status', function () {
   if (!token) {
     return { body: JSON.stringify({ text: 'Not linked. Use "Connect Plex account" (or paste a token) and save.' }) }
   }
-  // Linked from here on: the manual token field is redundant, hide it.
+  // Linked from here on, so the manual token field is redundant and hidden
   var hide = ['plex_token']
   var cfg = matinee.getConfig()
   if (!cfg.server_url) {
@@ -368,7 +365,6 @@ matinee.http.onRequest('status', function () {
   return { body: JSON.stringify({ text: text, hide: hide }) }
 })
 
-// Plex users, Matinee accounts, and the name-based auto matches for the usermatch config field.
 matinee.http.onRequest('users', function () {
   var token = ownerToken() || checkPin()
   if (!token) {
@@ -501,7 +497,7 @@ function startRun() {
   return cursor
 }
 
-// List the movie and show sections with the current user's token -> so per-user library restrictions apply naturally.
+// Lists the movie and show sections with the current user's token, so per-user library restrictions apply naturally
 function stepSections(cursor) {
   var user = cursor.users[cursor.userIdx]
   matinee.log('migrating ' + user.remoteName + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')')
@@ -691,7 +687,7 @@ function stepEpisodes(cursor) {
   }
 }
 
-// For full sync only -> unwatch local files the source knows about but no longer has as watched.
+// The full-sync pass that clears local watched flags the source has since dropped
 function stepReconcile(cursor) {
   var user = cursor.users[cursor.userIdx]
   var universe = loadJSON('run.universe') || {}
@@ -719,7 +715,7 @@ function stepNextSection(cursor) {
   cursor.phase = cursor.fullSync ? 'reconcile' : 'nextuser'
 }
 
-// Resolves Plex ratingKey to its provider ids, cached across the run.
+// Provider IDs are cached across the migration run
 function guidsForRatingKey(ratingKey) {
   if (!ratingKey) return {}
   var map = loadJSON('run.rkmap') || {}
@@ -791,7 +787,7 @@ function stepHistory(cursor) {
   }
 }
 
-// Goes to the next user or finishes the run with a summary.
+// Goes to the next user or finishes the run with a summary
 function stepNextUser(cursor) {
   var done = cursor.users[cursor.userIdx]
   matinee.log(

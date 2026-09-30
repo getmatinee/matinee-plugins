@@ -6,7 +6,16 @@
   "author": "you",
   "main": "main.js",
   "matinee_min": "2.2.1",
-  "capabilities": ["metadata_provider", "scanner"],
-  "scopes": ["network"],
-  "config": [{ "key": "api_key", "label": "API Key", "type": "password" }]
+  "scopes": [
+    "network",
+    "metadata-providers",
+    "scanners"
+  ],
+  "config": [
+    {
+      "key": "api_key",
+      "label": "API key",
+      "type": "password"
+    }
+  ]
 }
