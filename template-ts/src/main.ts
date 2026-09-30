@@ -3,8 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Matinee plugin template. Build with `npm run build`, which
-// bundles this file to main.js, the entrypoint referenced by manifest.json.
+// Plugin template bundled to the manifest's main.js entrypoint by npm run build
 
 const config = matinee.getConfig()
 matinee.log(`${matinee.manifest.name} v${matinee.manifest.version} loaded`)
