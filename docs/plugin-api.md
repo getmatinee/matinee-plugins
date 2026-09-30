@@ -49,7 +49,7 @@ A source install fetches exactly three files: `manifest.json`, the entrypoint, a
 | `password` | masked input, stored as-is | |
 | `number` | numeric input | |
 | `boolean` | checkbox | |
-| `button` | button that POSTs a named hook | `action` (required): the hook name |
+| `button` | button that POSTs a named hook | `action` (required): the hook name. The hook's JSON body may carry `message` (shown as a notice), `config` (values filled into the form, unsaved until Save) and `redirect` (an http, https or relative address the browser opens) |
 | `multiselect` | checkbox list loaded from a hook | `options_hook` (required): hook returning `{options: [{value, label}]}` |
 | `info` | read-only status text from a hook, polled while the modal is open | `status_hook` (required): hook returning `{text, busy?, progress?, hide?}` |
 | `usermatch` | two-column matcher: drag local users onto remote rows | `options_hook` (required), see below |
@@ -85,9 +85,10 @@ matinee.http.onCallback(function (req) {
 ```
 
 - Named hooks are served at `POST/GET /api/plugins/<id>/hook/<name>`, **admin-authenticated**. They power `button` (`action`), `multiselect` (`options_hook`) and `info` (`status_hook`) rows.
-- The callback is served at `GET /api/plugins/<id>/callback`, **unauthenticated** and rate-limited. It exists for OAuth redirects, so validate your own state nonce.
-- `req` carries `method`, `path`, `query`, `headers`, `body`, plus `baseUrl` for the API origin and `webUrl` for the web app origin. `Authorization` and `Cookie` headers are stripped before the request reaches the plugin.
-- Return `{status, body, contentType}` or `{redirect}`. A hook that runs while the plugin is wedged returns 503 to the caller.
+- The callback is served at `GET /api/plugins/<id>/callback`, **unauthenticated** and rate-limited. It exists for OAuth redirects, so validate your own state nonce. A body it returns is served with `Content-Security-Policy: sandbox`, so the page renders without scripts and without access to the Matinee origin.
+- `req` carries `method`, `path`, `query`, `headers`, `body`, plus `baseUrl` for the API origin, `webUrl` for the web app origin and `cookies`, the plugin's own callback cookies by name. `Authorization` and `Cookie` headers are stripped before the request reaches the plugin, and no other cookie is handed over.
+- Return `{status, body, contentType}` or `{redirect}`. A redirect must be an http or https address or a path, and any other scheme fails the call. A hook that runs while the plugin is wedged returns 503 to the caller.
+- A callback answer may add `cookies: [{name, value, maxAge}]`, at most four, to bind a sign-in to the browser that started it. The server sets them HttpOnly, SameSite=Lax and, on https, Secure, under a name only this plugin reads, and the browser sends them back only to this plugin's URLs. A name is 1 to 32 letters, digits or underscores, a value at most 1024 characters without spaces, quotes, commas or semicolons. A negative `maxAge` deletes the cookie. Named hooks cannot set cookies.
 
 ## The `matinee` host API (v1)
 
@@ -104,6 +105,7 @@ matinee.http.onCallback(function (req) {
 | `matinee.schedule(everyMinutes, fn)` | - | recurring task; first run one interval after load; minimum 1 minute |
 | `matinee.http.onRequest(name, fn)` / `.onCallback(fn)` | - | inbound hooks, see above |
 | `matinee.http.fetch(url, {method, headers, body, insecure})` | `network` | outbound HTTP(S); returns `{status, headers, body}` |
+| `matinee.crypto.randomToken(bytes?)` / `.sha256(text, 'hex' \| 'base64url')` / `.base64(text, 'std' \| 'url')` / `.base64Decode(text)` | - | OAuth state, PKCE and header encoding from the server's standard library. `randomToken` answers unpadded base64url of 32 random bytes by default, `base64Decode` reads either alphabet with or without padding |
 | `matinee.playlists.*`, `matinee.music.*` | `playlists` | playlist sync surface, see below |
 | `matinee.users.*`, `matinee.media.*`, `matinee.watch.*` | `watch-states` | watch-state migration surface, see below |
 | `matinee.registerMetadataProvider(def)` | `metadata-providers` | metadata extension point |
@@ -115,7 +117,7 @@ matinee.http.onCallback(function (req) {
 
 Canonical scopes: `storage`, `network`, `playlists`, `watch-states`, `metadata-providers`, `scanners`, `auth`, `ldap`.
 
-Scopes are shown to the admin at install time, and the server enforces them:
+Scopes are shown to the admin at install time, and the server enforces them. The admin approves the scopes the registry entry lists, so the `scopes` of `manifest.json` must not name one the registry entry leaves out, and a scope the server does not know makes the install fail. An update whose registry entry lists more scopes than the admin approved asks the admin again.
 
 - `network`: without it, `matinee.http.fetch` throws.
 - `playlists`: without it, `matinee.playlists` and `matinee.music` do not exist.
@@ -126,7 +128,7 @@ Scopes are shown to the admin at install time, and the server enforces them:
 - `auth`: without it, `matinee.auth` does not exist.
 - `ldap`: without it, `matinee.ldap` does not exist.
 
-A plugin that registers a scanner replaces how filenames are parsed for every library, and a plugin with `auth` decides who may sign in, so those two are the widest scopes an admin can grant. They are deliberately separate from `metadata-providers`, since adding a metadata source is a much smaller request.
+A plugin that registers a scanner replaces how filenames are parsed for every library whose scanner setting selects it, and a plugin with `auth` decides who may sign in, so those two are the widest scopes an admin can grant. They are deliberately separate from `metadata-providers`, since adding a metadata source is a much smaller request.
 
 ### Activities
 
@@ -159,9 +161,9 @@ The host also logs every `matinee.http.fetch` at debug level automatically, with
 | `scan.completed` | `{job_id, job_type, library_id, library_name, status}` |
 | `job.completed` | same as above, fired for every job type |
 
-These three are the only events the server emits today. Subscribing to any other name never fires. Handlers run on the plugin's own single thread, in emit order, so a counter incremented on `media.added` is complete by the time `scan.completed` arrives.
+These three are the only events the server emits today. Subscribing to any other name never fires. Handlers run on the plugin's own single thread, in emit order, so a counter incremented on `media.added` has seen every delivered event by the time `scan.completed` arrives. A plugin whose queue is full while the server emits misses that event, so treat the count as a report, not as an inventory.
 
-`media.added` fires once per new item, thousands of times during a first scan. Do not log from it. Count in the handler and report once on `scan.completed`, the way `hello-world` does.
+`media.added` fires once per new top-level item, a film, a series, a music album or an audiobook, thousands of times during a first scan. Do not log from it. Count in the handler and report once on `scan.completed`, the way `hello-world` does.
 
 ### Extension points
 
@@ -182,7 +184,7 @@ matinee.registerMetadataProvider({
 })
 ```
 
-**Playlist sync** (scope `playlists`): everything a sync plugin such as Spotify needs. Tracks that exist locally are added as regular entries. Tracks that do not are recorded as **ghost tracks** and shown greyed-out as "Not available" with artist and album in the playlist. The `(source, external_id)` pair makes `addGhostTrack` idempotent across re-syncs.
+**Playlist sync** (scope `playlists`): everything a sync plugin such as Spotify needs. Tracks that exist locally are added as regular entries. Tracks that do not are recorded as **ghost tracks** and shown greyed-out as "Not available" with artist and album in the playlist. The `(source, external_id)` pair makes `addGhostTrack` idempotent across re-syncs. After every music scan the server matches all ghost tracks again and turns the ones it now finds into regular entries at their position, and a file that disappears leaves its playlist entries behind as ghost tracks.
 
 ```js
 matinee.playlists.list()                        // [{id, name, owner_username, track_count}]
@@ -191,15 +193,18 @@ matinee.playlists.create(ownerUsername, name)   // returns id (existing one if t
 matinee.playlists.addTrack(playlistId, mediaFileId, {source, external_id, position})
 matinee.playlists.reconcileTracks(playlistId, source, seenExternalIds) // returns removed count
 matinee.playlists.removeTrack(playlistId, mediaFileId)
-matinee.playlists.addGhostTrack(playlistId, {title, artist, album, source, external_id, position})
+matinee.playlists.addGhostTrack(playlistId, {title, artist, album, source, external_id, position, duration_ms, isrc})
 matinee.playlists.removeGhostTrack(ghostId)
 matinee.playlists.clearGhostTracks(playlistId, source)
+matinee.music.matchTrack({title, artists, album, duration_ms, isrc, username}) // {media_file_id} or null
 matinee.music.searchTracks({title, artist, username}) // [{media_file_id, title, album, artist, library_id}]
 ```
 
 `addTrack`'s third argument is optional. Called without it, the track is appended at the end and a duplicate is ignored. A sync that passes `source`, `external_id` and the upstream `position` gets upsert semantics instead: the row keeps following the external track, a re-sync updates its position, and the same external id resolving to a different local file replaces the old row. After a full pass, `reconcileTracks` drops the source's rows whose external id was not seen this time. Rows without a source are user-added, and neither call ever touches them.
 
-`searchTracks` accepts an object or a bare title string. Matching is normalized on both sides, lower case with punctuation collapsed to spaces, so a title like "Don't Stop Me Now" is found from its cleaned form. Results rank exact title matches first, then artist agreement. Pass the playlist owner as `username` and the search honors that user's library grants. Leaving it out searches every library, admins included.
+`matchTrack` answers the one local file the track names, or `null`. A file with the same ISRC wins outright. Otherwise the title has to match after its markers are taken off, and a marker that names a different recording, such as "(Live)", "(Instrumental)" or "(Remix)", has to be present on both sides, while "(Remastered 2011)" or "(Radio Edit)" count for nothing. One of the `artists` has to agree with the file's artist or, when the file has none, with the album artist, and a duration more than 15 seconds off rejects the file. Among the files that pass, the closest duration ranks first, then the exact album, then the shortest title. A ghost track stored with `duration_ms` and `isrc` is matched by the same rules after every music scan. Pass the playlist owner as `username` so only that user's libraries are searched.
+
+`searchTracks` accepts an object or a bare title string and lists files whose title or artist contains the query, exact titles first and then the ones whose artist contains `artist`. It is meant for plugins that let a person choose from the list, not for matching. Pass the playlist owner as `username` and the search honors that user's library grants. Leaving it out searches every library, admins included.
 
 **Watch states** (scope `watch-states`): read users and per-user watch progress, resolve media by provider id, and write watched flags and resume positions. Used by the Emby and Plex migration plugins.
 
@@ -244,7 +249,7 @@ matinee.auth.registerProvider({
 
 `id` is the stable identifier the account stays linked to, such as an objectGUID or a subject claim, and `username` becomes the Matinee username. `admin` set to a boolean puts the account's administrator flag under the directory's control on every sign-in, with the last administrator never demoted. Left out, the flag stays as Matinee has it. A `null` verdict lets the server fall back to a local account of that name, which is how clients without the login page's local-account switch still reach one, so answer `false` rather than `null` whenever the directory knew the name.
 
-A **redirect provider** signs in through the browser instead. The login page sends the browser to `GET /api/plugins/<id>/callback?start=1`, and the plugin's callbak handles both that start and the provider's return:
+A **redirect provider** signs in through the browser instead. The login page sends the browser to `GET /api/plugins/<id>/callback?start=1`, and the plugin's callback handles both that start and the provider's return:
 
 ```js
 matinee.auth.registerProvider({ name: 'Keycloak', redirect: true })
@@ -288,7 +293,7 @@ Attribute values that are not valid UTF-8, such as an objectGUID, arrive as lowe
 - **Install**: the admin picks the plugin in the catalog and approves its scopes. The server stages the files, validates the manifest, atomically swaps them into place and starts the plugin.
 - **Enable / disable**: starts or stops the plugin's VM. State in `matinee.storage` survives.
 - **Config save**: reloads the plugin with a fresh VM, so the entrypoint re-runs.
-- **Update**: same as install. The catalog offers it when the registry lists a different version than the installed one.
+- **Update**: same as install. The catalog offers it when the registry lists a newer version than the installed one.
 - **Uninstall**: stops the plugin, deletes its directory and its storage.
 
 Because a reload restarts the VM, keep durable state in `matinee.storage`, not in module globals.

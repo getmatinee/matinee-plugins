@@ -5,11 +5,8 @@
 
 // Type declarations for the Matinee plugin host API
 
-// One admin-editable setting rendered in Settings -> Plugins -> Configure.
-// Hook-driven fields wire a config row to a named matinee.http.onRequest hook,
-// where `button` POSTs its `action` hook, `multiselect` loads choices as
-// [{value, label}] from `options_hook` and `info` shows read-only text from
-// `status_hook`
+// Admin fields use named HTTP hooks. Buttons POST to `action`, multiselect loads
+// `{value, label}` choices from `options_hook`, and info reads text from `status_hook`
 interface MatineeConfigField {
   key: string
   label: string
@@ -30,9 +27,8 @@ interface MatineeStatusResponse {
   hide?: string[]
 }
 
-// What a usermatch field's options_hook returns. The field stores
-// { [remoteValue]: localValue } under its config key, empty meaning
-// "use the suggested matches"
+// User matching stores a remote-to-local value map under its config key.
+// An empty map selects the suggested matches
 interface MatineeUserMatchOptions {
   remote: Array<{ value: string; label: string; disabled?: boolean; note?: string }>
   local: Array<{ value: string; label: string }>
@@ -67,9 +63,8 @@ interface MatineeFetchResult {
   body: string
 }
 
-// Named hooks from matinee.http.onRequest are served admin-authenticated at
-// /api/plugins/<id>/hook/<name>. The single matinee.http.onCallback callback
-// is public at /api/plugins/<id>/callback
+// Named hooks require admin authentication at /api/plugins/<id>/hook/<name>.
+// The onCallback handler is public at /api/plugins/<id>/callback
 interface MatineeHookRequest {
   method: string
   path: string
@@ -80,13 +75,24 @@ interface MatineeHookRequest {
   baseUrl: string
   // The web app origin, such as https://host
   webUrl: string
+  // The plugin's own callback cookies by name. No other cookie reaches a plugin
+  cookies: Record<string, string>
+}
+
+// Only a callback answer sets cookies. A negative maxAge deletes one, zero keeps it for the browser session
+interface MatineeHookCookie {
+  name: string
+  value: string
+  maxAge?: number
 }
 
 interface MatineeHookResponse {
   status?: number
   body?: string
   contentType?: string
+  // An http or https address or a path. Any other scheme fails the call
   redirect?: string
+  cookies?: MatineeHookCookie[]
 }
 
 interface MatineePlaylistSummary {
@@ -207,9 +213,8 @@ interface MatineeHost {
   log(...args: unknown[]): void
   // Dropped unless the server's debug logging toggle is on
   debug(...args: unknown[]): void
-  // Reports a running task to the Activities dropdown. Refresh it with the
-  // same key on every tick, because entries not refreshed for 5 minutes drop
-  // out, and done removes it while message shows as an admin success toast
+  // Activities expire after five minutes without a refresh under the same key.
+  // done removes the entry and message shows an admin success toast
   activity(def: { key: string; title?: string; progress?: number; done?: boolean; message?: string }): void
   http: {
     fetch(url: string, options?: MatineeFetchOptions): MatineeFetchResult
@@ -222,6 +227,14 @@ interface MatineeHost {
     get(key: string): string | null
     set(key: string, value: string): void
     delete(key: string): void
+  }
+  crypto: {
+    // Unpadded base64url text of that many random bytes, 32 by default
+    randomToken(bytes?: number): string
+    sha256(text: string, encoding?: 'hex' | 'base64url'): string
+    base64(text: string, variant?: 'std' | 'url'): string
+    // Reads either alphabet, with or without padding
+    base64Decode(text: string): string
   }
   on(event: 'media.added' | 'scan.completed' | 'job.completed', handler: (payload: any) => void): void
   schedule(everyMinutes: number, fn: () => void): void
@@ -262,9 +275,8 @@ interface MatineeHost {
     parseMovie?(path: string): { title: string; year?: number } | null
     parseEpisode?(path: string): { season?: number; episode: number; title?: string } | null
   }): void
-  // Requires the "auth" scope. authenticate answers the identity, null for an
-  // unknown user, false for a refused password, or throws when the directory
-  // could not be asked. A redirect provider issues tickets from its callback
+  // Requires the auth scope. authenticate returns an identity, null for an unknown user,
+  // false for a refused password, or throws on lookup failure. Redirect providers issue callback tickets
   auth: {
     registerProvider(def: {
       name?: string
