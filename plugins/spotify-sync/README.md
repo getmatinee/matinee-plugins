@@ -1,6 +1,6 @@
 # Spotify Playlist Sync
 
-Mirrors Spotify playlists into Matinee playlists. Tracks found in your music libraries play normally. Tracks you don't have appear greyed-out as "Not available" with artist and album info.
+Mirrors Spotify playlists into Matinee playlists. Tracks found in your music libraries play normally. Tracks you don't have appear greyed-out as "Not available" with artist and album info, and Matinee matches them again after every music scan, so a track you add later takes its place in the playlist on its own. A track is only taken as found when its ISRC, or its title, version, artist and duration, agree with a local file.
 
 ## Spotify developer app
 
