@@ -3,8 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Node tests for oidc-sso, from the id token decoding and the claim mapping to a whole sign-in against a
-// fake provider. Run them from the repository root with node --test "plugins/**/*.test.js"
+// Tests oidc-sso from id token decoding and claim mapping to a whole sign-in against a fake provider
 
 'use strict'
 

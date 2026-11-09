@@ -5,8 +5,7 @@
 
 // Type declarations for the Matinee plugin host API
 
-// Admin fields use named HTTP hooks. Buttons POST to `action`, multiselect loads
-// `{value, label}` choices from `options_hook`, and info reads text from `status_hook`
+// Buttons POST to `action`, multiselect loads `{value, label}` choices from `options_hook` and info reads `status_hook`
 interface MatineeConfigField {
   key: string
   label: string
@@ -18,8 +17,7 @@ interface MatineeConfigField {
   status_hook?: string
 }
 
-// What an info field's status_hook returns. While the modal polls, busy
-// shows a spinner and progress, from 0 to 100, fills a bar
+// While the modal polls, busy shows a spinner and progress from 0 to 100 fills a bar
 interface MatineeStatusResponse {
   text: string
   busy?: boolean
@@ -27,8 +25,7 @@ interface MatineeStatusResponse {
   hide?: string[]
 }
 
-// User matching stores a remote-to-local value map under its config key.
-// An empty map selects the suggested matches
+// Stored under its config key as a remote-to-local value map, where an empty map selects the suggested matches
 interface MatineeUserMatchOptions {
   remote: Array<{ value: string; label: string; disabled?: boolean; note?: string }>
   local: Array<{ value: string; label: string }>
@@ -53,7 +50,6 @@ interface MatineeFetchOptions {
   method?: string
   headers?: Record<string, string>
   body?: string
-  // Skips TLS verification e.g. for a self-signed LAN server
   insecure?: boolean
 }
 
@@ -63,19 +59,15 @@ interface MatineeFetchResult {
   body: string
 }
 
-// Named hooks require admin authentication at /api/plugins/<id>/hook/<name>.
-// The onCallback handler is public at /api/plugins/<id>/callback
+// Named hooks need admin authentication at /api/plugins/<id>/hook/<name>, while onCallback is public at /api/plugins/<id>/callback
 interface MatineeHookRequest {
   method: string
   path: string
   query: Record<string, string>
   headers: Record<string, string>
   body: string
-  // The API origin, such as https://host/api
   baseUrl: string
-  // The web app origin, such as https://host
   webUrl: string
-  // The plugin's own callback cookies by name. No other cookie reaches a plugin
   cookies: Record<string, string>
 }
 
@@ -86,11 +78,11 @@ interface MatineeHookCookie {
   maxAge?: number
 }
 
+// Redirects take an http or https address or a path, and any other scheme fails the call
 interface MatineeHookResponse {
   status?: number
   body?: string
   contentType?: string
-  // An http or https address or a path. Any other scheme fails the call
   redirect?: string
   cookies?: MatineeHookCookie[]
 }
@@ -134,9 +126,9 @@ interface MatineeSearchResult {
   backdrop_url?: string
 }
 
+// Movies carry title and tv series carry name
 interface MatineeDetails {
   id: string | number
-  // Movies carry title, tv series carry name
   title?: string
   name?: string
   overview?: string
@@ -179,8 +171,7 @@ interface MatineeSetStateOptions {
   lastPlayedAt?: string
 }
 
-// Who a sign-in provider says the user is. id is the stable identifier the
-// Matinee account stays linked to, and admin left out keeps the flag as it is
+// The account stays linked to id, and leaving admin out keeps its administrator flag as it is
 interface MatineeIdentity {
   id: string
   username: string
@@ -206,34 +197,28 @@ interface MatineeLDAPConnection {
   close(): void
 }
 
+// Scoped members such as storage, auth and ldap are undefined unless the manifest declares their scope
 interface MatineeHost {
   manifest: MatineeManifest
   version: number
   getConfig(): Record<string, unknown>
   log(...args: unknown[]): void
-  // Dropped unless the server's debug logging toggle is on
   debug(...args: unknown[]): void
-  // Activities expire after five minutes without a refresh under the same key.
-  // done removes the entry and message shows an admin success toast
   activity(def: { key: string; title?: string; progress?: number; done?: boolean; message?: string }): void
   http: {
     fetch(url: string, options?: MatineeFetchOptions): MatineeFetchResult
     onRequest(name: string, handler: (req: MatineeHookRequest) => MatineeHookResponse | void): void
     onCallback(handler: (req: MatineeHookRequest) => MatineeHookResponse | void): void
   }
-  // Requires the "storage" scope and is undefined when the manifest does not
-  // declare it
   storage: {
     get(key: string): string | null
     set(key: string, value: string): void
     delete(key: string): void
   }
   crypto: {
-    // Unpadded base64url text of that many random bytes, 32 by default
     randomToken(bytes?: number): string
     sha256(text: string, encoding?: 'hex' | 'base64url'): string
     base64(text: string, variant?: 'std' | 'url'): string
-    // Reads either alphabet, with or without padding
     base64Decode(text: string): string
   }
   on(event: 'media.added' | 'scan.completed' | 'job.completed', handler: (payload: any) => void): void
@@ -275,8 +260,6 @@ interface MatineeHost {
     parseMovie?(path: string): { title: string; year?: number } | null
     parseEpisode?(path: string): { season?: number; episode: number; title?: string } | null
   }): void
-  // Requires the auth scope. authenticate returns an identity, null for an unknown user,
-  // false for a refused password, or throws on lookup failure. Redirect providers issue callback tickets
   auth: {
     registerProvider(def: {
       name?: string
@@ -285,7 +268,6 @@ interface MatineeHost {
     }): void
     issueTicket(identity: MatineeIdentity): string
   }
-  // Requires the "ldap" scope. connect answers null when the bind was refused
   ldap: {
     connect(opts: { url: string; bindDn?: string; password?: string; insecure?: boolean; startTls?: boolean }): MatineeLDAPConnection | null
     escapeFilter(value: string): string

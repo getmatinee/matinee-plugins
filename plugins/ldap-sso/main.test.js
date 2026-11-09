@@ -3,9 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Node tests for ldap-sso against a scripted directory, covering the three
-// verdicts of authenticate, the admin group verdict and the filter escaping.
-// Run them from the repository root with node --test "plugins/**/*.test.js"
+// Tests ldap-sso against a scripted directory, covering the authenticate verdicts, the admin group and filter escaping
 
 'use strict'
 
