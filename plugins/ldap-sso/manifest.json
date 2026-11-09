@@ -1,8 +1,8 @@
 {
   "id": "ldap-sso",
   "name": "LDAP Single Sign-on",
-  "version": "0.2.5",
-  "description": "Sign users in against an LDAP directory such as Active Directory or FreeIPA. Directory users get a Matinee account on first sign-in, and an existing local account of the same name is linked to its directory identity.",
+  "version": "0.2.6",
+  "description": "Sign users in against an LDAP directory such as Active Directory or FreeIPA. Directory users get a Matinee account on first sign-in. A local account with the same name is never taken over.",
   "author": "Michael André Reber",
   "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/ldap-sso",
   "main": "main.js",

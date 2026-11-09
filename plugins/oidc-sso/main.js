@@ -3,9 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// OpenID Connect Single Sign-on
-// A redirect sign-in provider. The plugin callback sends the browser to the provider and takes it
-// back with a code, trades the code for tokens, and hands the login page a ticket for the identity
+// OpenID Connect redirect sign-in that trades the provider's code for tokens and hands the login page a ticket
 
 'use strict'
 
@@ -52,7 +50,7 @@ function qs(obj) {
 
 function idTokenClaims(idToken) {
   var parts = String(idToken || '').split('.')
-  if (parts.length !== 3) throw new Error('the id token is not a JWT')
+  if (parts.length !== 3) throw new Error('The ID token is not a JWT.')
   return JSON.parse(matinee.crypto.base64Decode(parts[1]))
 }
 
@@ -65,12 +63,12 @@ function fetchJSON(url, opts) {
     insecure: cfg.insecure
   })
   if (res.status < 200 || res.status >= 300) {
-    throw new Error(url.split('?')[0] + ' answered ' + res.status)
+    throw new Error(url.split('?')[0] + ' answered ' + res.status + '.')
   }
   try {
     return JSON.parse(res.body)
   } catch (e) {
-    throw new Error(url.split('?')[0] + ' did not answer JSON')
+    throw new Error(url.split('?')[0] + ' did not answer with JSON.')
   }
 }
 
@@ -78,10 +76,10 @@ function fetchJSON(url, opts) {
 function discovery() {
   if (discoveryCache) return discoveryCache
   var cfg = settings()
-  if (!cfg.issuer) throw new Error('the issuer URL is not configured')
+  if (!cfg.issuer) throw new Error('The issuer URL is not set.')
   var doc = fetchJSON(cfg.issuer + '/.well-known/openid-configuration', {})
   if (!doc.authorization_endpoint || !doc.token_endpoint) {
-    throw new Error('the discovery document names no authorization or token endpoint')
+    throw new Error('The discovery document names no authorization or token endpoint.')
   }
   discoveryCache = doc
   return doc
@@ -112,8 +110,7 @@ function saveStates(states) {
   matinee.storage.set(STATE_INDEX, JSON.stringify(states))
 }
 
-// Remembers a started sign-in with its PKCE verifier and id token nonce. Stale entries age out, so an
-// abandoned sign-in cannot pile up storage
+// Stale entries age out, so abandoned sign-ins cannot pile up storage
 function rememberState(state, verifier, nonce, now) {
   var states = loadStates().filter(function (entry) { return now - entry.at < STATE_TTL_MS })
   states.push({ s: state, v: verifier, n: nonce, at: now })
@@ -121,8 +118,7 @@ function rememberState(state, verifier, nonce, now) {
   saveStates(states)
 }
 
-// Spends a started sign-in and answers its verifier and nonce, or null for a state the provider
-// sends back twice or one older than the lifetime
+// Returns null for a state the provider sends back twice or one older than the lifetime
 function consumeState(state, now) {
   var states = loadStates()
   var found = null
@@ -138,18 +134,16 @@ function consumeState(state, now) {
   return found
 }
 
-// The state travels in a cookie of this browser as well, so a callback link started elsewhere cannot
-// finish a sign-in here
+// The state also travels in a cookie, so a callback link started in another browser cannot finish a sign-in here
 function stateCookie(state) {
   return { name: 'state', value: state, maxAge: state ? STATE_TTL_MS / 1000 : -1 }
 }
 
-// Maps the token claims onto the identity Matinee links the account to. The
-// admin verdict is only given when an administrator group is configured
+// Leaves admin unset unless an administrator group is configured, so Matinee keeps its own verdict
 function identityFromClaims(claims, cfg) {
   var username = text(claims[cfg.username_claim])
-  if (!text(claims.sub)) throw new Error('the token carries no sub claim')
-  if (!username) throw new Error('the token carries no ' + cfg.username_claim + ' claim')
+  if (!text(claims.sub)) throw new Error('The token carries no sub claim.')
+  if (!username) throw new Error('The token carries no ' + cfg.username_claim + ' claim.')
   var identity = {
     id: text(claims.sub),
     username: username,
@@ -167,7 +161,7 @@ function identityFromClaims(claims, cfg) {
 
 function start(req) {
   var cfg = settings()
-  if (!cfg.client_id) throw new Error('the client id is not configured')
+  if (!cfg.client_id) throw new Error('The client ID is not set.')
   var doc = discovery()
   var state = matinee.crypto.randomToken(32)
   var verifier = matinee.crypto.randomToken(48)
@@ -192,11 +186,11 @@ function finish(req) {
   if (req.query.error) {
     throw new Error(text(req.query.error_description) || String(req.query.error))
   }
-  if (!req.query.code || !req.query.state) throw new Error('the provider sent no code')
+  if (!req.query.code || !req.query.state) throw new Error('The provider sent no code.')
   var state = String(req.query.state)
-  if (!req.cookies || req.cookies.state !== state) throw new Error('the sign-in was started in another browser')
+  if (!req.cookies || req.cookies.state !== state) throw new Error('The sign-in was started in another browser.')
   var started = consumeState(state, Date.now())
-  if (!started) throw new Error('the sign-in state is unknown or expired')
+  if (!started) throw new Error('The sign-in is unknown or expired. Start it again.')
 
   var doc = discovery()
   var token = fetchJSON(doc.token_endpoint, {
@@ -211,16 +205,15 @@ function finish(req) {
       code_verifier: started.verifier
     })
   })
-  if (!token.id_token) throw new Error('the token response carries no id token')
+  if (!token.id_token) throw new Error('The token response carries no ID token.')
 
-  // The id token arrived over TLS straight from the token endpoint in exchange for the client
-  // secret, which is what vouches for it here. Its issuer, audience and expiry are still checked
+  // The signature goes unchecked because the token came over TLS straight from the token endpoint for the client secret
   var claims = idTokenClaims(token.id_token)
-  if (text(claims.iss).replace(/\/+$/, '') !== cfg.issuer) throw new Error('the id token names another issuer')
+  if (text(claims.iss).replace(/\/+$/, '') !== cfg.issuer) throw new Error('The ID token names another issuer.')
   var audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
-  if (audience.indexOf(cfg.client_id) === -1) throw new Error('the id token is for another client')
-  if (typeof claims.exp === 'number' && claims.exp * 1000 < Date.now()) throw new Error('the id token has expired')
-  if (claims.nonce !== started.nonce) throw new Error('the id token belongs to another sign-in')
+  if (audience.indexOf(cfg.client_id) === -1) throw new Error('The ID token is for another client.')
+  if (typeof claims.exp === 'number' && claims.exp * 1000 < Date.now()) throw new Error('The ID token has expired.')
+  if (claims.nonce !== started.nonce) throw new Error('The ID token belongs to another sign-in.')
 
   if (doc.userinfo_endpoint && token.access_token) {
     try {
@@ -254,9 +247,9 @@ matinee.http.onRequest('check', function (req) {
   try {
     discoveryCache = null
     var doc = discovery()
-    body = { message: 'Issuer answered from ' + doc.issuer + '. Register the redirect URI ' + redirectUri(req) + ' at the provider' }
+    body = { message: 'The issuer ' + doc.issuer + ' answered. Register the redirect URI ' + redirectUri(req) + ' at the provider.' }
   } catch (e) {
-    body = { message: 'Issuer check failed. ' + (e && e.message ? e.message : String(e)) }
+    body = { message: 'Could not read the issuer. ' + (e && e.message ? e.message : String(e)) }
   }
   return { status: 200, body: JSON.stringify(body), contentType: 'application/json' }
 })
@@ -265,8 +258,7 @@ var initial = settings()
 matinee.auth.registerProvider({ name: initial.display_name, redirect: true })
 matinee.log('oidc-sso v' + matinee.manifest.version + ' loaded' + (initial.issuer ? ' for ' + initial.issuer : ', not configured yet'))
 
-// Node sees this during the repo's tests. Inside goja there is no module
-// object, so the guard keeps the plugin loading unchanged there
+// Only Node sees this, during the repo's tests, because goja has no module object
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     idTokenClaims: idTokenClaims,

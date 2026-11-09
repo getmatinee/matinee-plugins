@@ -3,9 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// LDAP Single Sign-on
-// A password sign-in provider that checks the login form's credentials against an LDAP directory,
-// looking the user up through a service account or binding straight through the user DN template
+// Password sign-in provider that checks the login form against LDAP, through a service account or a user DN template
 
 'use strict'
 
@@ -105,8 +103,7 @@ function sameDN(a, b) {
   return text(a).replace(/\s*,\s*/g, ',').toLowerCase() === text(b).replace(/\s*,\s*/g, ',').toLowerCase()
 }
 
-// Maps a directory entry onto the identity Matinee links the account to. The
-// admin verdict is only given when an administrator group is configured
+// Leaves admin unset unless an administrator group is configured, so Matinee keeps its own verdict
 function identityFromEntry(entry, cfg, fallbackUsername) {
   var username = attr(entry, cfg.username_attr) || fallbackUsername
   var identity = {
@@ -156,19 +153,18 @@ function findUser(conn, cfg, username) {
   return entries.length === 1 ? entries[0] : null
 }
 
-// The provider contract. An identity signs the user in, null means an unknown name, false a
-// refused password, and a thrown error a directory that could not be asked
+// Returns an identity to sign in, null for an unknown name, false for a refused password, and throws when the directory is unreachable
 function authenticate(username, password) {
   var cfg = settings(matinee.getConfig())
   username = text(username)
   if (!username || !password) return false
   if (!text(cfg.url) || !text(cfg.user_base_dn) || !text(cfg.user_filter)) {
-    throw new Error('ldap-sso is not configured yet')
+    throw new Error('The LDAP sign-in is not configured yet.')
   }
 
   if (text(cfg.bind_dn)) {
     var service = matinee.ldap.connect(connectOptions(cfg, text(cfg.bind_dn), String(cfg.bind_password || '')))
-    if (!service) throw new Error('the service account bind was refused, check the service account DN and password')
+    if (!service) throw new Error('The directory refused the service account. Check the service account DN and password.')
     var entry
     try {
       entry = findUser(service, cfg, username)
@@ -189,11 +185,10 @@ function authenticate(username, password) {
   }
 
   var template = text(cfg.user_dn_template)
-  if (!template) throw new Error('set a service account or a user DN template')
+  if (!template) throw new Error('Set a service account or a user DN template.')
   var own = matinee.ldap.connect(connectOptions(cfg, fill(template, matinee.ldap.escapeDN(username)), password))
   if (!own) {
-    // A direct bind cannot tell an unknown name from a wrong password, so a wrong
-    // password it is, and a local account of that name stays reachable through the switch
+    // Direct binds cannot tell an unknown name from a wrong password, so this answers false and a local account stays reachable through the switch
     dbg('bind refused for ' + username)
     return false
   }
@@ -219,18 +214,18 @@ function preset(key) {
     for (var name in PRESETS[key]) {
       if (Object.prototype.hasOwnProperty.call(PRESETS[key], name)) values[name] = PRESETS[key][name]
     }
-    return jsonResponse({ config: values, message: 'Example values filled in. Replace host, base DN and service account, then save.' })
+    return jsonResponse({ config: values, message: 'The example values are filled in. Replace the host, base DN and service account, then save.' })
   }
 }
 
 function testConnection() {
   var cfg = settings(matinee.getConfig())
-  if (!text(cfg.url)) return jsonResponse({ message: 'Enter the directory URL first' })
+  if (!text(cfg.url)) return jsonResponse({ message: 'Enter the directory URL first.' })
   if (!text(cfg.bind_dn)) {
-    return jsonResponse({ message: 'No service account configured. Sign in with a directory user to test the user DN template' })
+    return jsonResponse({ message: 'No service account is set. Sign in as a directory user to test the user DN template.' })
   }
   var conn = matinee.ldap.connect(connectOptions(cfg, text(cfg.bind_dn), String(cfg.bind_password || '')))
-  if (!conn) return jsonResponse({ message: 'The directory refused the service account credentials' })
+  if (!conn) return jsonResponse({ message: 'The directory refused the service account credentials.' })
   try {
     var entries = conn.search({
       baseDn: text(cfg.user_base_dn),
@@ -238,8 +233,8 @@ function testConnection() {
       attributes: [cfg.username_attr],
       sizeLimit: 500
     })
-    var more = entries.length >= 500 ? ' or more' : ''
-    return jsonResponse({ message: 'Connected. The user filter matches ' + entries.length + more + ' users' })
+    var count = entries.length >= 500 ? '500 or more users' : entries.length === 1 ? '1 user' : entries.length + ' users'
+    return jsonResponse({ message: 'Connected. The user filter matches ' + count + '.' })
   } finally {
     conn.close()
   }
@@ -255,8 +250,7 @@ matinee.http.onRequest('preset-freeipa', preset('freeipa'))
 matinee.http.onRequest('test', testConnection)
 matinee.log('ldap-sso v' + matinee.manifest.version + ' loaded' + (text(initial.url) ? ' for ' + text(initial.url) : ', not configured yet'))
 
-// Node sees this during the repo's tests. Inside goja there is no module
-// object, so the guard keeps the plugin loading unchanged there
+// Only Node sees this, during the repo's tests, because goja has no module object
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { authenticate: authenticate, identityFromEntry: identityFromEntry, settings: settings, fill: fill, sameDN: sameDN }
 }
