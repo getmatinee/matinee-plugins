@@ -1,7 +1,7 @@
 {
   "id": "migrate-emby",
   "name": "Emby Watch-State Migration",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Migrate watched flags and resume positions per user from an Emby server into Matinee.",
   "author": "Anna Reber",
   "homepage": "https://github.com/getmatinee/matinee-plugins/tree/main/plugins/migrate-emby",
@@ -9,13 +9,13 @@
   "matinee_min": "2.2.0",
   "scopes": ["network", "storage", "watch-states"],
   "config": [
-    { "key": "server_url", "label": "Emby server URL", "type": "text", "required": true, "description": "For example http://emby.local:8096 or https://192.168.1.10:8096. No trailing slash." },
+    { "key": "server_url", "label": "Emby server URL", "type": "text", "required": true, "description": "For example http://emby.local:8096 or https://192.168.1.10:8096." },
     { "key": "insecure", "label": "Accept self-signed certificates", "type": "boolean", "description": "Skips certificate verification for the Emby server. Only for a server whose certificate is not signed by a CA this server trusts." },
     { "key": "api_key", "label": "Emby API key", "type": "password", "required": true, "description": "Create one under Emby Dashboard, Advanced, API Keys." },
     { "key": "_status", "label": "Connection", "type": "info", "status_hook": "status" },
     { "key": "user_pairs", "label": "User matching", "type": "usermatch", "options_hook": "users", "description": "Drag a Matinee user onto an Emby user to migrate that pair. Unassigned users are skipped." },
-    { "key": "full_sync", "label": "Mirror the source exactly (may unwatch items in Matinee)", "type": "boolean", "description": "Off = only set watched flags and resume positions, never unwatch." },
+    { "key": "full_sync", "label": "Mirror the source exactly (may unwatch items in Matinee)", "type": "boolean", "description": "When off, the migration only sets watched flags and resume positions and never unwatches anything." },
     { "key": "_run", "label": "Run migration", "type": "button", "action": "run" },
-    { "key": "_last", "label": "Last run", "type": "info", "status_hook": "last-run" }
+    { "key": "_last", "label": "Migration status", "type": "info", "status_hook": "last-run" }
   ]
 }

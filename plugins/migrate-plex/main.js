@@ -3,9 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Plex Watch State Migration
-// The admin links a Plex account via the plex.tv/link PIN flow or pastes a token, maps Plex users to Matinee accounts, and a scheduler-driven job copies watched flags and resume positions per user.
-// External shared users migrate watched flags only, from the server history
+// Copies Plex watched flags and resume positions into mapped Matinee accounts, linked through the plex.tv/link PIN flow or a token
 
 'use strict'
 
@@ -23,6 +21,26 @@ function dbg(msg) {
 
 function act(def) {
   if (typeof matinee.activity === 'function') matinee.activity(def)
+}
+
+function plural(n, one, many) {
+  return n + ' ' + (n === 1 ? one : many)
+}
+
+function sentence(text) {
+  text = String(text).trim()
+  return /[.!?]$/.test(text) ? text : text + '.'
+}
+
+var PHASES = {
+  sections: 'reading the libraries',
+  history: 'reading the watch history',
+  movies: 'copying movies',
+  shows: 'matching series',
+  episodes: 'copying episodes',
+  reconcile: 'unwatching items',
+  nextsection: 'moving to the next library',
+  nextuser: 'finishing the user'
 }
 
 function loadJSON(key) {
@@ -84,7 +102,7 @@ function plexRequest(method, url, token) {
   var insecure = Boolean(matinee.getConfig().insecure) && url.indexOf(PLEXTV) !== 0
   var res = matinee.http.fetch(url, { method: method, headers: plexHeaders(token), insecure: insecure })
   if (res.status >= 400) {
-    throw new Error('Plex API error ' + res.status + ' for ' + url.split('?')[0])
+    throw new Error('Plex answered ' + res.status + ' for ' + url.split('?')[0])
   }
   return JSON.parse(res.body)
 }
@@ -131,22 +149,21 @@ matinee.http.onRequest('connect', function () {
     headers: plexHeaders(null)
   })
   if (res.status >= 400) {
-    return { status: 502, body: JSON.stringify({ error: 'plex.tv rejected the link request (' + res.status + ').' }) }
+    return { status: 502, body: JSON.stringify({ error: 'Could not get a link code from plex.tv. It answered ' + res.status + '.' }) }
   }
   var data
   try {
     data = JSON.parse(res.body)
   } catch (e) {
-    return { status: 502, body: JSON.stringify({ error: 'plex.tv returned an invalid response.' }) }
+    return { status: 502, body: JSON.stringify({ error: 'Could not read the answer from plex.tv.' }) }
   }
   if (!data || !data.id || !data.code) {
-    return { status: 502, body: JSON.stringify({ error: 'plex.tv returned no link code.' }) }
+    return { status: 502, body: JSON.stringify({ error: 'Could not get a link code from plex.tv.' }) }
   }
   saveJSON('pin', { id: data.id, code: data.code, createdAt: Date.now() })
   return { body: JSON.stringify({ message: 'Enter code ' + data.code + ' at https://plex.tv/link.' }) }
 })
 
-// Matches remote users to Matinee accounts by name
 function matchUsers(remoteUsers) {
   var locals = matinee.users.list()
   var byName = {}
@@ -225,6 +242,7 @@ function fetchRemoteUsers(token) {
     }
   } catch (e) {
   }
+  // Servers without the accounts endpoint migrate the owner and home users only
   try {
     var accounts = plexRequest('GET', baseUrl() + '/accounts', token)
     var list = ((accounts && accounts.MediaContainer) || {}).Account || []
@@ -237,7 +255,6 @@ function fetchRemoteUsers(token) {
       out.push({ id: 'acct:' + a.id, accountId: String(a.id), name: aname, external: true })
     }
   } catch (e) {
-    // Servers without the accounts endpoint migrate the owner and home users only
   }
   return out
 }
@@ -298,7 +315,6 @@ function formatTime(ms) {
   }
 }
 
-// Converts Plex lastViewedAt to RFC3339
 function rfc3339(unixSeconds) {
   var n = Number(unixSeconds)
   if (!isFinite(n) || n <= 0) return ''
@@ -331,13 +347,13 @@ matinee.http.onRequest('status', function () {
     return { body: JSON.stringify({ text: 'Enter code ' + pin.code + ' at https://plex.tv/link.' }) }
   }
   if (!token) {
-    return { body: JSON.stringify({ text: 'Not linked. Use "Connect Plex account" (or paste a token) and save.' }) }
+    return { body: JSON.stringify({ text: 'The Plex account is not linked. Use "Connect Plex account" or paste a token into "Plex token (manual fallback)", then save.' }) }
   }
   // Linked from here on, so the manual token field is redundant and hidden
   var hide = ['plex_token']
   var cfg = matinee.getConfig()
   if (!cfg.server_url) {
-    return { body: JSON.stringify({ text: 'Linked. Enter the Plex server URL and save.', hide: hide }) }
+    return { body: JSON.stringify({ text: 'The Plex account is linked. Enter the Plex server URL and save.', hide: hide }) }
   }
   var text
   if (statusCache && Date.now() - statusCache.at < STATUS_CACHE_MS) {
@@ -346,19 +362,18 @@ matinee.http.onRequest('status', function () {
     try {
       var identity = plexRequest('GET', baseUrl() + '/identity', token)
       var mc = (identity && identity.MediaContainer) || {}
-      lines.push('Connected to Plex server (version ' + (mc.version || 'unknown') + ').')
+      lines.push('Connected to the Plex server (version ' + (mc.version || 'unknown') + ').')
       var matched = matchUsers(fetchRemoteUsers(token))
       var resolved = resolvePairs(matched, false)
       var names = []
       for (var i = 0; i < resolved.length; i++) {
         names.push(resolved[i].remoteName + ' -> ' + resolved[i].matineeName)
       }
-      var line = matched.length + ' Plex users (owner, home and external shared), ' + resolved.length + ' will be migrated'
-      line += names.length ? ': ' + names.join(', ') + '.' : '.'
-      lines.push(line)
+      lines.push(plural(matched.length, 'Plex user', 'Plex users') + ' across owner, home and external shared accounts, ' + resolved.length + ' paired for the migration')
+      if (names.length) lines.push(names.join(', '))
       text = lines.join('\n')
     } catch (e) {
-      text = 'Not connected: ' + (e && e.message ? e.message : String(e)) + ' Check the server URL and link state.'
+      text = 'Could not connect. ' + sentence(e && e.message ? e.message : String(e)) + ' Check the server URL and the account link.'
     }
     statusCache = { at: Date.now(), text: text }
   }
@@ -402,7 +417,7 @@ matinee.http.onRequest('run', function () {
     return { status: 400, body: JSON.stringify({ error: 'Link your Plex account first.' }) }
   }
   if (loadJSON('run.cursor')) {
-    return { body: JSON.stringify({ message: 'Migration already running.' }) }
+    return { body: JSON.stringify({ message: 'A migration is already running.' }) }
   }
   matinee.storage.set('run.request', '1')
   return { body: JSON.stringify({}) }
@@ -421,28 +436,27 @@ matinee.http.onRequest('last-run', function () {
   var cursor = loadJSON('run.cursor')
   var queued = !cursor && matinee.storage.get('run.request') === '1'
   if (queued) {
-    lines.push('Queued.')
+    lines.push('The migration is queued.')
   }
   if (cursor) {
     var user = cursor.users[cursor.userIdx]
     lines.push(
-      'Running (' + (cursor.fullSync ? 'full sync' : 'additive') + '): user ' +
-      (cursor.userIdx + 1) + ' of ' + cursor.users.length +
-      (user ? ' (' + user.remoteName + ')' : '') + ', phase ' + cursor.phase + '.'
+      'Migrating ' + (user ? user.remoteName + ', ' : '') + 'user ' + (cursor.userIdx + 1) + ' of ' + cursor.users.length +
+      ', ' + (PHASES[cursor.phase] || cursor.phase) + (cursor.fullSync ? ', full sync' : '')
     )
   }
   var last = loadJSON('run.last')
   if (last && last.completedAt) {
-    lines.push('Last run: ' + formatTime(last.completedAt) + (last.fullSync ? ' (full sync).' : '.'))
+    lines.push('Last run: ' + formatTime(last.completedAt) + (last.fullSync ? ', full sync' : ''))
     for (var i = 0; i < (last.users || []).length; i++) {
       var u = last.users[i]
       lines.push(
         u.name + ': ' + u.updated + ' updated, ' + u.skipped + ' already current, ' +
-        u.unmatched + ' unmatched' + (last.fullSync ? ', ' + u.unwatched + ' unwatched' : '') + '.'
+        u.unmatched + ' unmatched' + (last.fullSync ? ', ' + u.unwatched + ' unwatched' : '')
       )
     }
   }
-  if (!lines.length) lines.push('Never run.')
+  if (!lines.length) lines.push('The migration has not run yet.')
   var payload = { text: lines.join('\n'), busy: !!cursor || queued }
   if (cursor) payload.progress = runProgress(cursor)
   else if (queued) payload.progress = 0
@@ -493,7 +507,7 @@ function startRun() {
     startedAt: Date.now()
   }
   saveJSON('run.cursor', cursor)
-  matinee.log('migration started: ' + users.length + ' user(s), ' + (cursor.fullSync ? 'full sync' : 'additive'))
+  matinee.log('migration started for ' + plural(users.length, 'user', 'users') + ', ' + (cursor.fullSync ? 'full sync' : 'additive'))
   return cursor
 }
 
@@ -516,7 +530,7 @@ function stepSections(cursor) {
     else if (d.type === 'show') cursor.sections.push({ key: String(d.key), kind: 'show' })
   }
   saveJSON('run.seriesmap', {})
-  dbg(user.remoteName + ': ' + cursor.sections.length + ' section(s)')
+  dbg(user.remoteName + ' has ' + plural(cursor.sections.length, 'library', 'libraries'))
   cursor.sectionIdx = 0
   cursor.offset = 0
   cursor.phase = cursor.sections.length ? nextSectionPhase(cursor) : 'nextuser'
@@ -526,7 +540,15 @@ function nextSectionPhase(cursor) {
   return cursor.sections[cursor.sectionIdx].kind === 'movie' ? 'movies' : 'shows'
 }
 
-// Applies one source item's watch data to every mapped local file
+function writeState(userId, fileId, opts, states) {
+  matinee.watch.setState(userId, fileId, opts)
+  var state = states[fileId] || { media_file_id: fileId, watched: false, position_seconds: 0 }
+  if (typeof opts.watched === 'boolean') state.watched = opts.watched
+  if (typeof opts.positionSeconds === 'number') state.position_seconds = opts.positionSeconds
+  if (opts.lastPlayedAt) state.last_played_at = opts.lastPlayedAt
+  states[fileId] = state
+}
+
 function applyItem(user, item, files, states, universe, sourceWatched, fullSync) {
   var watched = Number(item.viewCount) > 0
   var position = Math.floor(Number(item.viewOffset || 0) / 1000)
@@ -547,7 +569,7 @@ function applyItem(user, item, files, states, universe, sourceWatched, fullSync)
       }
       var opts = { watched: watched, positionSeconds: position }
       if (lastPlayed) opts.lastPlayedAt = lastPlayed
-      matinee.watch.setState(user.matineeId, fileId, opts)
+      writeState(user.matineeId, fileId, opts, states)
       user.stats.updated++
       continue
     }
@@ -558,7 +580,7 @@ function applyItem(user, item, files, states, universe, sourceWatched, fullSync)
       }
       var wopts = { watched: true }
       if (lastPlayed) wopts.lastPlayedAt = lastPlayed
-      matinee.watch.setState(user.matineeId, fileId, wopts)
+      writeState(user.matineeId, fileId, wopts, states)
       user.stats.updated++
       continue
     }
@@ -569,7 +591,7 @@ function applyItem(user, item, files, states, universe, sourceWatched, fullSync)
       }
       var popts = { positionSeconds: position }
       if (lastPlayed) popts.lastPlayedAt = lastPlayed
-      matinee.watch.setState(user.matineeId, fileId, popts)
+      writeState(user.matineeId, fileId, popts, states)
       user.stats.updated++
     }
   }
@@ -727,7 +749,6 @@ function guidsForRatingKey(ratingKey) {
     var meta = ((data && data.MediaContainer) || {}).Metadata || []
     if (meta.length) ids = guidsOf(meta[0])
   } catch (e) {
-    // unresolvable ratingKey
   }
   map[key] = ids
   saveJSON('run.rkmap', map)
@@ -787,7 +808,6 @@ function stepHistory(cursor) {
   }
 }
 
-// Goes to the next user or finishes the run with a summary
 function stepNextUser(cursor) {
   var done = cursor.users[cursor.userIdx]
   matinee.log(
@@ -816,8 +836,8 @@ function stepNextUser(cursor) {
     matinee.storage.delete('run.cursor')
     matinee.storage.delete('run.seriesmap')
     matinee.storage.delete('run.rkmap')
-    matinee.log('migration complete: ' + cursor.users.length + ' user(s)')
-    act({ key: 'migration', done: true, message: 'Plex migration complete: ' + cursor.users.length + ' user(s)' })
+    matinee.log('migration complete for ' + plural(cursor.users.length, 'user', 'users'))
+    act({ key: 'migration', done: true, message: 'Plex migration finished for ' + plural(cursor.users.length, 'user', 'users') })
     return false
   }
   return true
@@ -871,7 +891,9 @@ matinee.schedule(1, function () {
     var current = cursor.users[cursor.userIdx]
     act({
       key: 'migration',
-      title: 'Migrating ' + (current ? current.remoteName : '') + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')',
+      title: current
+        ? 'Migrating ' + current.remoteName + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')'
+        : 'Migrating user ' + (cursor.userIdx + 1) + ' of ' + cursor.users.length,
       progress: runProgress(cursor)
     })
   }

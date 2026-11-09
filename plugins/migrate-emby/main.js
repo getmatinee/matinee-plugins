@@ -21,6 +21,17 @@ function act(def) {
   if (typeof matinee.activity === 'function') matinee.activity(def)
 }
 
+function plural(n, one, many) {
+  return n + ' ' + (n === 1 ? one : many)
+}
+
+function sentence(text) {
+  text = String(text).trim()
+  return /[.!?]$/.test(text) ? text : text + '.'
+}
+
+var PHASES = { seriesmap: 'matching series', items: 'copying watch states', reconcile: 'unwatching items', nextuser: 'finishing the user' }
+
 function loadJSON(key) {
   var raw = matinee.storage.get(key)
   if (!raw) return null
@@ -60,12 +71,11 @@ function embyGet(path, params) {
     insecure: Boolean(cfg.insecure)
   })
   if (res.status >= 400) {
-    throw new Error('Emby API error ' + res.status + ' for ' + path.split('?')[0])
+    throw new Error('Emby answered ' + res.status + ' for ' + path.split('?')[0])
   }
   return JSON.parse(res.body)
 }
 
-// Matches remote users to Matinee accounts by name
 function matchUsers(remoteUsers) {
   var locals = matinee.users.list()
   var byName = {}
@@ -174,7 +184,6 @@ function formatTime(ms) {
   }
 }
 
-// Convert Emby LastPlayedDate to RFC3339
 function rfc3339(raw) {
   if (!raw) return ''
   try {
@@ -186,8 +195,7 @@ function rfc3339(raw) {
   }
 }
 
-// Cached briefly, because the modal polls this every few seconds and the
-// answer costs two Emby round trips
+// Cached briefly, because the modal polls this every few seconds and each answer costs two Emby round trips
 matinee.http.onRequest('status', function () {
   var cfg = matinee.getConfig()
   if (!cfg.server_url || !cfg.api_key) {
@@ -206,11 +214,10 @@ matinee.http.onRequest('status', function () {
     for (var i = 0; i < resolved.length; i++) {
       names.push(resolved[i].remoteName + ' -> ' + resolved[i].matineeName)
     }
-    var line = matched.length + ' Emby users, ' + resolved.length + ' will be migrated'
-    line += names.length ? ': ' + names.join(', ') + '.' : '.'
-    lines.push(line)
+    lines.push(plural(matched.length, 'Emby user', 'Emby users') + ', ' + resolved.length + ' paired for the migration')
+    if (names.length) lines.push(names.join(', '))
   } catch (e) {
-    var errBody = JSON.stringify({ text: 'Not connected: ' + (e && e.message ? e.message : String(e)) + ' Check URL and API key.' })
+    var errBody = JSON.stringify({ text: 'Could not connect. ' + sentence(e && e.message ? e.message : String(e)) + ' Check the server URL and API key.' })
     statusCache = { at: Date.now(), body: errBody }
     return { body: errBody }
   }
@@ -246,7 +253,7 @@ matinee.http.onRequest('run', function () {
     return { status: 400, body: JSON.stringify({ error: 'Enter the Emby server URL and API key first.' }) }
   }
   if (loadJSON('run.cursor')) {
-    return { body: JSON.stringify({ message: 'Migration already running.' }) }
+    return { body: JSON.stringify({ message: 'A migration is already running.' }) }
   }
   matinee.storage.set('run.request', '1')
   return { body: JSON.stringify({}) }
@@ -267,28 +274,27 @@ matinee.http.onRequest('last-run', function () {
   var cursor = loadJSON('run.cursor')
   var queued = !cursor && matinee.storage.get('run.request') === '1'
   if (queued) {
-    lines.push('Queued.')
+    lines.push('The migration is queued.')
   }
   if (cursor) {
     var user = cursor.users[cursor.userIdx]
     lines.push(
-      'Running (' + (cursor.fullSync ? 'full sync' : 'additive') + '): user ' +
-      (cursor.userIdx + 1) + ' of ' + cursor.users.length +
-      (user ? ' (' + user.remoteName + ')' : '') + ', phase ' + cursor.phase + '.'
+      'Migrating ' + (user ? user.remoteName + ', ' : '') + 'user ' + (cursor.userIdx + 1) + ' of ' + cursor.users.length +
+      ', ' + (PHASES[cursor.phase] || cursor.phase) + (cursor.fullSync ? ', full sync' : '')
     )
   }
   var last = loadJSON('run.last')
   if (last && last.completedAt) {
-    lines.push('Last run: ' + formatTime(last.completedAt) + (last.fullSync ? ' (full sync).' : '.'))
+    lines.push('Last run: ' + formatTime(last.completedAt) + (last.fullSync ? ', full sync' : ''))
     for (var i = 0; i < (last.users || []).length; i++) {
       var u = last.users[i]
       lines.push(
         u.name + ': ' + u.updated + ' updated, ' + u.skipped + ' already current, ' +
-        u.unmatched + ' unmatched' + (last.fullSync ? ', ' + u.unwatched + ' unwatched' : '') + '.'
+        u.unmatched + ' unmatched' + (last.fullSync ? ', ' + u.unwatched + ' unwatched' : '')
       )
     }
   }
-  if (!lines.length) lines.push('Never run.')
+  if (!lines.length) lines.push('The migration has not run yet.')
   var payload = { text: lines.join('\n'), busy: !!cursor || queued }
   if (cursor) payload.progress = runProgress(cursor)
   else if (queued) payload.progress = 0
@@ -331,7 +337,7 @@ function startRun() {
   }
   saveJSON('run.seriesmap', {})
   saveJSON('run.cursor', cursor)
-  matinee.log('migration started: ' + users.length + ' user(s), ' + (cursor.fullSync ? 'full sync' : 'additive'))
+  matinee.log('migration started for ' + plural(users.length, 'user', 'users') + ', ' + (cursor.fullSync ? 'full sync' : 'additive'))
   return cursor
 }
 
@@ -364,7 +370,6 @@ function stepSeriesMap(cursor) {
   }
 }
 
-// Resolve one Emby item to local media_file ids
 function resolveItem(item, seriesMap) {
   if (item.Type === 'Movie') {
     var mids = providerIdsOf(item)
@@ -382,7 +387,16 @@ function resolveItem(item, seriesMap) {
   return []
 }
 
-// Applies one source item's watch data to every mapped local file. Default mode never regresses local state, while full sync mirrors the source values
+function writeState(userId, fileId, opts, states) {
+  matinee.watch.setState(userId, fileId, opts)
+  var state = states[fileId] || { media_file_id: fileId, watched: false, position_seconds: 0 }
+  if (typeof opts.watched === 'boolean') state.watched = opts.watched
+  if (typeof opts.positionSeconds === 'number') state.position_seconds = opts.positionSeconds
+  if (opts.lastPlayedAt) state.last_played_at = opts.lastPlayedAt
+  states[fileId] = state
+}
+
+// Default mode never regresses local state, while full sync mirrors the source values
 function applyItem(user, item, files, states, universe, sourceWatched, fullSync) {
   var data = item.UserData || {}
   var watched = data.Played === true
@@ -404,7 +418,7 @@ function applyItem(user, item, files, states, universe, sourceWatched, fullSync)
       }
       var opts = { watched: watched, positionSeconds: position }
       if (lastPlayed) opts.lastPlayedAt = lastPlayed
-      matinee.watch.setState(user.matineeId, fileId, opts)
+      writeState(user.matineeId, fileId, opts, states)
       user.stats.updated++
       continue
     }
@@ -415,7 +429,7 @@ function applyItem(user, item, files, states, universe, sourceWatched, fullSync)
       }
       var wopts = { watched: true }
       if (lastPlayed) wopts.lastPlayedAt = lastPlayed
-      matinee.watch.setState(user.matineeId, fileId, wopts)
+      writeState(user.matineeId, fileId, wopts, states)
       user.stats.updated++
       continue
     }
@@ -426,7 +440,7 @@ function applyItem(user, item, files, states, universe, sourceWatched, fullSync)
       }
       var popts = { positionSeconds: position }
       if (lastPlayed) popts.lastPlayedAt = lastPlayed
-      matinee.watch.setState(user.matineeId, fileId, popts)
+      writeState(user.matineeId, fileId, popts, states)
       user.stats.updated++
     }
   }
@@ -534,8 +548,8 @@ function stepNextUser(cursor) {
     saveJSON('run.last', summary)
     matinee.storage.delete('run.cursor')
     matinee.storage.delete('run.seriesmap')
-    matinee.log('migration complete: ' + cursor.users.length + ' user(s)')
-    act({ key: 'migration', done: true, message: 'Emby migration complete: ' + cursor.users.length + ' user(s)' })
+    matinee.log('migration complete for ' + plural(cursor.users.length, 'user', 'users'))
+    act({ key: 'migration', done: true, message: 'Emby migration finished for ' + plural(cursor.users.length, 'user', 'users') })
     return false
   }
   return true
@@ -584,7 +598,9 @@ matinee.schedule(1, function () {
     var current = cursor.users[cursor.userIdx]
     act({
       key: 'migration',
-      title: 'Migrating ' + (current ? current.remoteName : '') + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')',
+      title: current
+        ? 'Migrating ' + current.remoteName + ' (' + (cursor.userIdx + 1) + ' of ' + cursor.users.length + ')'
+        : 'Migrating user ' + (cursor.userIdx + 1) + ' of ' + cursor.users.length,
       progress: runProgress(cursor)
     })
   }
