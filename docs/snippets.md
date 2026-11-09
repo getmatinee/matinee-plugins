@@ -1,6 +1,6 @@
 # Shared helper snippets
 
-Source installs fetch exactly three files, so plugins in this repository stay single-file and copy these helpers verbatim instead of importing a shared module. Fix a bug here first, then in every plugin that carries the copy (`grep -l 'function loadJSON' plugins/*/main.js`).
+Source installs fetch exactly three files and the server has no module loader, so plugins in this repository stay single-file and copy these helpers verbatim instead of importing a shared module. Fix a bug here first, then in every plugin that carries the copy. From the repository root, `grep -l 'function loadJSON' plugins/*/main.js` lists the plugins that carry `loadJSON`, and the same works for every helper below.
 
 ## Debug logging
 
@@ -42,7 +42,9 @@ function qs(obj) {
 }
 ```
 
-## Random tokens (state nonces)
+## Random identifiers
+
+Use `matinee.crypto.randomToken()` for OAuth state, PKCE verifiers and nonces. `randToken` builds a lowercase alphanumeric identifier of `n` characters, such as the client identifier migrate-plex sends to plex.tv.
 
 ```js
 function randToken(n) {
@@ -55,4 +57,4 @@ function randToken(n) {
 }
 ```
 
-`Math.random()` is not cryptographically strong; for OAuth state nonces on an already-authenticated admin flow it is acceptable, but do not use it for secrets.
+The server draws `Math.random()` from the system's cryptographic random source.

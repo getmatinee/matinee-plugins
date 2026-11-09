@@ -8,18 +8,19 @@
 registry.json duplicates each plugin's description, scopes and homepage so the
 catalog can render before a plugin is installed. Nothing keeps those copies in
 sync with the manifest, so this check does. It also holds every manifest to
-the scopes the server enforces, the checksum a zip download needs, and the
-rule that a plugin lives in the directory named after its id.
+the scopes the server enforces, the checksum a zip download needs, the
+rule that a plugin lives in the directory named after its id, and the
+mechanical UI text rules for manifests and plugin messages.
 
 It is run from the repository root: python3 scripts/validate.py
 """
 
 import json
 import os
+import re
 import sys
 
-# The typographic characters banned across the project. Letters carrying
-# diacritics are fine. The characters below are not
+# Typographic punctuation banned across the project, while accented letters stay allowed
 BANNED = {
     "–": "en-dash (use -)",
     "—": "em-dash (use a comma or colon)",
@@ -42,6 +43,18 @@ CONFIG_TYPES = {"text", "password", "number", "boolean", "button", "multiselect"
 
 # The scopes the server checks through Manifest.HasScope. Anything else is a typo the admin would approve for nothing
 SCOPES = {"storage", "network", "metadata-providers", "scanners", "watch-states", "playlists", "auth", "ldap"}
+
+UI_TEXT_BANNED = [
+    (re.compile(r"\((?:s|es)\)"), "a (s) plural marker, write the plural the count needs"),
+    (re.compile(r"\b(?:Failed to|Unable to)\b"), "a failure that does not read \"Could not ...\""),
+    (re.compile(r"\bPlease\b"), "\"Please\", which the UI never says"),
+]
+MANIFEST_TEXT_BANNED = UI_TEXT_BANNED + [
+    (re.compile(r";"), "a semicolon, write the second sentence"),
+    (re.compile(r" [-/] "), "a \" - \" or \" / \" connector"),
+    (re.compile(r" & "), "an \"&\", write \"and\""),
+]
+JS_STRING = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 
 errors = []
 
@@ -135,6 +148,34 @@ def check_registry(root):
         check_scopes(pid, manifest.get("scopes") or [])
         check_config_fields(pid, manifest.get("config") or [])
 
+def check_text(where, text, rules):
+    for pattern, what in rules:
+        if pattern.search(text):
+            fail("%s contains %s: %r" % (where, what, text))
+
+def check_ui_text(root):
+    plugins_dir = os.path.join(root, "plugins")
+    for pid in sorted(os.listdir(plugins_dir)):
+        manifest_path = os.path.join(plugins_dir, pid, "manifest.json")
+        if not os.path.isfile(manifest_path):
+            continue
+        with open(manifest_path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        for key in ("name", "description"):
+            check_text("%s manifest %s" % (pid, key), manifest.get(key) or "", MANIFEST_TEXT_BANNED)
+        for field in manifest.get("config", []):
+            for key in ("label", "description"):
+                check_text("%s config %s %s" % (pid, field.get("key"), key), field.get(key) or "", MANIFEST_TEXT_BANNED)
+        main_path = os.path.join(plugins_dir, pid, manifest.get("main", "main.js"))
+        if not os.path.isfile(main_path):
+            continue
+        with open(main_path, encoding="utf-8") as fh:
+            for n, line in enumerate(fh, 1):
+                if line.lstrip().startswith("//"):
+                    continue
+                for literal in JS_STRING.findall(line):
+                    check_text("plugins/%s/%s:%d" % (pid, os.path.basename(main_path), n), literal[1:-1], UI_TEXT_BANNED)
+
 def check_scopes(pid, scopes):
     for scope in scopes:
         if scope not in SCOPES:
@@ -161,6 +202,7 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     check_registry(root)
     check_typography(root)
+    check_ui_text(root)
     if errors:
         for e in errors:
             print("error: %s" % e, file=sys.stderr)
