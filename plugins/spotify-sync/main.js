@@ -3,8 +3,7 @@
 // License: AGPL-3.0-or-later
 // https://github.com/getmatinee/matinee
 
-// Mirrors selected Spotify playlists into Matinee. Unmatched tracks stay in the playlist
-// as unavailable entries and are matched again after each music scan
+// Mirrors selected Spotify playlists into Matinee, keeping unmatched tracks as unavailable entries until a music scan matches them
 
 'use strict'
 
@@ -24,6 +23,10 @@ function dbg(msg) {
 
 function act(def) {
   if (typeof matinee.activity === 'function') matinee.activity(def)
+}
+
+function plural(n, one, many) {
+  return n + ' ' + (n === 1 ? one : many)
 }
 
 function loadJSON(key) {
@@ -55,8 +58,7 @@ function rateBlocked() {
   return until > Date.now()
 }
 
-// HTTP 429 sets `rateLimited` and records a retry deadline. HTTP 401 sets `expired`.
-// Other HTTP failures throw an Error
+// HTTP 429 sets `rateLimited` with a retry deadline and 401 sets `expired`. Any other failure throws
 function spotifyGet(url, tokens) {
   var res = matinee.http.fetch(url, {
     method: 'GET',
@@ -127,7 +129,7 @@ function redirectUriFor(req) {
 matinee.http.onRequest('connect', function (req) {
   var cfg = matinee.getConfig()
   if (!cfg.client_id) {
-    return { status: 400, body: JSON.stringify({ error: 'Enter your Spotify Client ID and save the configuration first.' }) }
+    return { status: 400, body: JSON.stringify({ error: 'Enter the Spotify client ID and save first.' }) }
   }
 
   var state = matinee.crypto.randomToken(32)
@@ -196,11 +198,11 @@ matinee.http.onCallback(function (req) {
     expires_at: Date.now() + (Number(data.expires_in) || 3600) * 1000
   })
 
+  // The profile lookup is cosmetic and a failure does not matter
   try {
     var me = spotifyGet(API + '/v1/me', { access_token: data.access_token })
     saveJSON('oauth.profile', { id: me.id || '', name: me.display_name || me.id || '' })
   } catch (e) {
-    // The profile lookup is cosmetic and a failure does not matter
   }
 
   matinee.log('Spotify account connected')
@@ -215,7 +217,7 @@ function syncablePlaylist(p, ownerId) {
 
 matinee.http.onRequest('playlists', function () {
   if (rateBlocked()) {
-    return { status: 503, body: JSON.stringify({ error: 'Spotify rate limit reached, try again in a moment.' }) }
+    return { status: 503, body: JSON.stringify({ error: 'Spotify is limiting requests. Try again in a moment.' }) }
   }
   var tokens = ensureTokens()
   if (!tokens) {
@@ -246,17 +248,17 @@ matinee.http.onRequest('playlists', function () {
         if (!syncablePlaylist(p, ownerId)) continue
         var counts = p.items || p.tracks
         var total = counts && typeof counts.total === 'number' ? counts.total : 0
-        options.push({ value: p.id, label: (p.name || p.id) + ' (' + total + ' tracks)' })
+        options.push({ value: p.id, label: (p.name || p.id) + ' (' + plural(total, 'track', 'tracks') + ')' })
       }
       url = page.next || null
       pages++
     }
   } catch (e) {
     if (e && e.rateLimited) {
-      return { status: 503, body: JSON.stringify({ error: 'Spotify rate limit reached, try again in a moment.' }) }
+      return { status: 503, body: JSON.stringify({ error: 'Spotify is limiting requests. Try again in a moment.' }) }
     }
     if (e && e.expired) {
-      return { status: 400, body: JSON.stringify({ error: 'Spotify session expired, reconnect your account.' }) }
+      return { status: 400, body: JSON.stringify({ error: 'The Spotify session expired. Reconnect your account.' }) }
     }
     throw e
   }
@@ -272,28 +274,27 @@ function formatTime(ms) {
 }
 
 matinee.http.onRequest('status', function (req) {
-  var lines = []
-
   var tokens = loadJSON('oauth.tokens')
   if (tokens && tokens.access_token) {
     var profile = loadJSON('oauth.profile')
-    lines.push('Connected as ' + (profile && profile.name ? profile.name : 'Spotify user') + '.')
-  } else {
-    lines.push('Not connected.')
-    lines.push('Redirect URI for your Spotify app:\n' + redirectUriFor(req))
+    return { body: JSON.stringify({ text: 'Connected as ' + (profile && profile.name ? profile.name : 'Spotify user') + '.' }) }
   }
+  return { body: JSON.stringify({ text: 'Not connected to Spotify.\nRedirect URI for your Spotify app:\n' + redirectUriFor(req) }) }
+})
 
+matinee.http.onRequest('sync-status', function () {
+  var lines = []
   var cursor = loadJSON('sync.cursor')
   var queued = !cursor && matinee.storage.get('sync.request') === '1'
   if (queued) {
-    lines.push('Sync queued.')
+    lines.push('A sync is queued.')
   }
   if (cursor && cursor.playlists) {
-    var line = 'Sync running: playlist ' + (cursor.idx + 1) + ' of ' + cursor.playlists.length
+    var line = 'Syncing playlist ' + (cursor.idx + 1) + ' of ' + cursor.playlists.length
     if (cursor.total >= 0) {
       line += ', track ' + Math.min(cursor.offset, cursor.total) + ' of ' + cursor.total
     }
-    lines.push(line + '.')
+    lines.push(line)
   }
 
   var last = loadJSON('sync.last')
@@ -301,13 +302,14 @@ matinee.http.onRequest('status', function (req) {
     lines.push(
       'Last sync: ' + formatTime(last.completedAt) + ', ' +
       (last.stats ? last.stats.matched : 0) + ' matched, ' +
-      (last.stats ? last.stats.ghosts : 0) + ' not available.'
+      (last.stats ? last.stats.ghosts : 0) + ' not available'
     )
   }
 
   if (rateBlocked()) {
-    lines.push('Spotify rate limit reached, waiting until ' + formatTime(Number(matinee.storage.get('rate.retryAfter'))) + '.')
+    lines.push('Spotify is limiting requests. The sync waits until ' + formatTime(Number(matinee.storage.get('rate.retryAfter'))) + '.')
   }
+  if (!lines.length) lines.push('No sync has run yet.')
 
   var payload = { text: lines.join('\n'), busy: !!cursor || queued }
   if (cursor && cursor.playlists) {
@@ -318,16 +320,31 @@ matinee.http.onRequest('status', function (req) {
   return { body: JSON.stringify(payload) }
 })
 
+// During a run the playlists ticked since it started join it, so they need no second run
 matinee.http.onRequest('sync-now', function () {
-  if (loadJSON('sync.cursor')) {
-    return { body: JSON.stringify({ message: 'Sync already running.' }) }
+  var cursor = loadJSON('sync.cursor')
+  if (!cursor) {
+    matinee.storage.set('sync.request', '1')
+    return { body: JSON.stringify({}) }
   }
-  matinee.storage.set('sync.request', '1')
-  return { body: JSON.stringify({}) }
+  var selected = matinee.getConfig().playlists || []
+  var added = 0
+  for (var i = 0; i < selected.length; i++) {
+    var id = String(selected[i])
+    if (cursor.playlists.indexOf(id) === -1) {
+      cursor.playlists.push(id)
+      added++
+    }
+  }
+  if (!added) {
+    return { body: JSON.stringify({ message: 'A sync is already running.' }) }
+  }
+  saveJSON('sync.cursor', cursor)
+  matinee.log('sync extended by ' + plural(added, 'playlist', 'playlists'))
+  return { body: JSON.stringify({ message: 'Added ' + plural(added, 'playlist', 'playlists') + ' to the running sync.' }) }
 })
 
-// The server tries ISRC before title, artist and duration. Unmatched tracks remain
-// unavailable until a music scan can match them
+// The server tries ISRC before title, artist and duration
 function matchTrack(tr, ownerUsername) {
   var artists = []
   var credits = tr.artists || []
@@ -345,7 +362,7 @@ function matchTrack(tr, ownerUsername) {
   })
 }
 
-// A sync starts on a manual request, or when auto sync is enabled and the last completed run is older than the interval
+// Starts on a manual request, or with auto sync on once the last completed run is older than the interval
 function startSync() {
   var cfg = matinee.getConfig()
   var requested = matinee.storage.get('sync.request') === '1'
@@ -396,7 +413,7 @@ function startSync() {
     startedAt: Date.now()
   }
   saveJSON('sync.cursor', cursor)
-  matinee.log('sync started: ' + playlists.length + ' playlist(s)')
+  matinee.log('sync started for ' + plural(playlists.length, 'playlist', 'playlists'))
   return cursor
 }
 
@@ -415,7 +432,7 @@ function advancePlaylist(cursor) {
   saveJSON('sync.last', { completedAt: Date.now(), stats: cursor.stats })
   matinee.storage.delete('sync.cursor')
   matinee.log('sync complete: ' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available')
-  act({ key: 'sync', done: true, message: 'Spotify sync complete: ' + cursor.stats.matched + ' matched, ' + cursor.stats.ghosts + ' not available' })
+  act({ key: 'sync', done: true, message: 'Spotify sync finished, ' + cursor.stats.matched + ' matched and ' + cursor.stats.ghosts + ' not available' })
   return true
 }
 
@@ -507,7 +524,7 @@ function syncStep(cursor) {
     if (cursor.offset >= cursor.total || items.length < PAGE_SIZE) {
       var removed = matinee.playlists.reconcileTracks(cursor.matineePlaylistId, SOURCE, cursor.seen || [])
       if (removed > 0) {
-        dbg('playlist "' + cursor.spotifyName + '": dropped ' + removed + ' track(s) no longer on Spotify')
+        dbg('dropped ' + plural(removed, 'track', 'tracks') + ' from "' + cursor.spotifyName + '" that Spotify no longer lists')
       }
       matinee.log('synced "' + cursor.spotifyName + '" (' + cursor.total + ' tracks)')
       return !advancePlaylist(cursor)
@@ -538,8 +555,7 @@ function syncStep(cursor) {
   }
 }
 
-// Reserve time for the next page before the host's 60-second interrupt.
-// Decay the estimate so one slow page does not throttle the entire sync
+// Reserves time for the next page before the host's 60-second interrupt, with a decaying estimate so one slow page cannot throttle the sync
 matinee.schedule(1, function () {
   var cursor = loadJSON('sync.cursor')
   if (!cursor) {
@@ -562,7 +578,9 @@ matinee.schedule(1, function () {
   if (cursor && loadJSON('sync.cursor')) {
     act({
       key: 'sync',
-      title: 'Syncing "' + cursor.spotifyName + '" (' + (cursor.idx + 1) + ' of ' + cursor.playlists.length + ')',
+      title: cursor.spotifyName
+        ? 'Syncing "' + cursor.spotifyName + '" (' + (cursor.idx + 1) + ' of ' + cursor.playlists.length + ')'
+        : 'Syncing playlist ' + (cursor.idx + 1) + ' of ' + cursor.playlists.length,
       progress: Math.min(99, Math.floor((cursor.idx / cursor.playlists.length) * 100))
     })
   }
@@ -570,7 +588,7 @@ matinee.schedule(1, function () {
 
 matinee.log('spotify-sync v' + matinee.manifest.version + ' loaded')
 
-// Node tests import this function. Goja provides no module object
+// Only Node sees this, during the repo's tests, because goja has no module object
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { matchTrack: matchTrack }
 }
